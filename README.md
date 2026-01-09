@@ -405,5 +405,5 @@ print(f"Events after filter: {df_filtered.Count().GetValue()}")
 ## Author
 Kszemka
 
-Project: CMS PPS Run 3 NanoAOD Validation  
+Project: CMS PPS NanoAOD Validation  
 Purpose: Efficiency analysis of unified data processing model
