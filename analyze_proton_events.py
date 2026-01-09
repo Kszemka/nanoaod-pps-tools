@@ -100,30 +100,28 @@ def filter_xi_ranged_events(df, xi_min, xi_max):
 
 def filter_detector_type(df, detector_type):
     """
-    Select events with tracks in specific detector type
+    Select events with tracks in specific detector type using PPSLocalTrack_rpType
 
     Args:
         df: RDataFrame
-        detector_type: 'pixel' for silicon pixel detectors (RP 3, 23, 103, 123)
-                      'diamond' for diamond timing detectors (RP 16, 22, 116, 122)
+        detector_type: 'pixel' for silicon pixel detectors (rpType = 4)
+                      'diamond' for diamond timing detectors (rpType = 5)
 
     Returns:
         Filtered RDataFrame
     """
-    detector_map = {
-        'pixel': [3, 23, 103, 123],
-        'diamond': [16, 22, 116, 122]
+    detector_type_map = {
+        'pixel': 4,
+        'diamond': 5
     }
 
-    if detector_type.lower() not in detector_map:
+    if detector_type.lower() not in detector_type_map:
         raise ValueError(f"Unknown detector type '{detector_type}'. Use 'pixel' or 'diamond'.")
 
-    rp_ids = detector_map[detector_type.lower()]
+    rp_type = detector_type_map[detector_type.lower()]
+    filter_expr = f"ROOT::VecOps::Any(PPSLocalTrack_rpType == {rp_type})"
 
-    conditions = " || ".join([f"PPSLocalTrack_decRPId == {rp_id}" for rp_id in rp_ids])
-    filter_expr = f"ROOT::VecOps::Any({conditions})"
-
-    df_filtered = df.Filter(filter_expr, f"Events with {detector_type} detector tracks")
+    df_filtered = df.Filter(filter_expr, f"Events with {detector_type} detector tracks (rpType={rp_type})")
     return df_filtered
 
 
@@ -173,7 +171,7 @@ def rdata_analysis(file_path, filter_funcs=None):
 
     return df_filtered
 
-def create_histograms_and_plots(df_with_pps, histogram_types=None, output_prefix="pps_analysis"):
+def create_histograms_and_plots(df_with_pps, histogram_types=None, output_prefix="pps_analysis", corrections=False, save_root=True):
     """
     Create histograms and plots for PPS analysis
 
@@ -182,6 +180,8 @@ def create_histograms_and_plots(df_with_pps, histogram_types=None, output_prefix
         histogram_types: List of PPSHistogramType enums specifying which histograms to create
                         If None, creates common histograms (nTracks, X, Y, XY)
         output_prefix: Prefix for output files (default: "pps_analysis")
+        corrections: If True, uses corrected columns (e.g., PPSLocalTrack_x_corrected)
+        save_root: If True, saves histograms to .root file (default: True)
 
     Returns:
         Dictionary of created histograms
@@ -200,10 +200,18 @@ def create_histograms_and_plots(df_with_pps, histogram_types=None, output_prefix
         histogram_types = list(PPSHistogramType)
 
     histograms = {}
+    suffix = "_corrected" if corrections else ""
 
     for hist_type in histogram_types:
         var_name = hist_type.value
-        print(f"Creating histogram for: {var_name}")
+
+        # Add suffix for corrected columns if needed
+        if corrections and var_name.startswith("PPSLocalTrack_"):
+            var_name_with_suffix = f"{var_name}{suffix}"
+        else:
+            var_name_with_suffix = var_name
+
+        print(f"Creating histogram for: {var_name_with_suffix}")
 
         if hist_type == PPSHistogramType.N_PPS_LOCAL_TRACK:
             h = df_with_pps.Histo1D(
@@ -212,15 +220,17 @@ def create_histograms_and_plots(df_with_pps, histogram_types=None, output_prefix
             histograms['ntracks'] = h
 
         elif hist_type == PPSHistogramType.PPS_LOCAL_TRACK_X:
+            title_suffix = " (Corrected)" if corrections else ""
             h = df_with_pps.Histo1D(
-                ("h_track_x", "PPS track X position;X [mm];Tracks",
-                 100, -20, 20), var_name)
+                ("h_track_x", f"PPS track X position{title_suffix};X [mm];Tracks",
+                 100, -20, 20), var_name_with_suffix)
             histograms['track_x'] = h
 
         elif hist_type == PPSHistogramType.PPS_LOCAL_TRACK_Y:
+            title_suffix = " (Corrected)" if corrections else ""
             h = df_with_pps.Histo1D(
-                ("h_track_y", "PPS track Y position;Y [mm];Tracks",
-                 100, -20, 20), var_name)
+                ("h_track_y", f"PPS track Y position{title_suffix};Y [mm];Tracks",
+                 100, -20, 20), var_name_with_suffix)
             histograms['track_y'] = h
 
         elif hist_type == PPSHistogramType.PPS_LOCAL_TRACK_DEC_RP_ID:
@@ -238,7 +248,7 @@ def create_histograms_and_plots(df_with_pps, histogram_types=None, output_prefix
         elif hist_type == PPSHistogramType.PPS_LOCAL_TRACK_TIME:
             h = df_with_pps.Histo1D(
                 ("h_track_time", "PPS track time;Time [ns];Tracks",
-                 100, -10, 10), var_name)
+                 100, -10, 10), var_name_with_suffix)
             histograms['track_time'] = h
 
         elif hist_type == PPSHistogramType.PPS_LOCAL_TRACK_TIME_UNC:
@@ -355,26 +365,30 @@ def create_histograms_and_plots(df_with_pps, histogram_types=None, output_prefix
     if (PPSHistogramType.PPS_LOCAL_TRACK_X in histogram_types and
         PPSHistogramType.PPS_LOCAL_TRACK_Y in histogram_types):
         print("Creating 2D histogram: X vs Y")
+        x_col = f"PPSLocalTrack_x{suffix}"
+        y_col = f"PPSLocalTrack_y{suffix}"
+        title_suffix = " (Corrected)" if corrections else ""
         h_xy = df_with_pps.Histo2D(
-            ("h_xy", "PPS track positions;X [mm];Y [mm]",
+            ("h_xy", f"PPS track positions{title_suffix};X [mm];Y [mm]",
              60, -20, 20, 60, -20, 20),
-            "PPSLocalTrack_x", "PPSLocalTrack_y")
+            x_col, y_col)
         histograms['xy'] = h_xy
 
     print(f"Created {len(histograms)} histogram(s)")
     print()
 
-    # Save histograms to ROOT file in data directory
-    output_root = os.path.join(data_dir, f"{output_prefix}.root")
-    print(f"Saving histograms to: {output_root}")
-    output_file = ROOT.TFile(output_root, "RECREATE")
+    # Save histograms to ROOT file only if save_root is True
+    if save_root:
+        output_root = os.path.join(data_dir, f"{output_prefix}.root")
+        print(f"Saving histograms to: {output_root}")
+        output_file = ROOT.TFile(output_root, "RECREATE")
 
-    for name, hist in histograms.items():
-        hist.Write()
+        for name, hist in histograms.items():
+            hist.Write()
 
-    output_file.Close()
-    print(f"Histograms saved!")
-    print()
+        output_file.Close()
+        print(f"Histograms saved!")
+        print()
 
     print("=== Creating Plots ===")
     ROOT.gROOT.SetBatch(True)

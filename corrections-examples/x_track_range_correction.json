@@ -1,0 +1,59 @@
+{
+  "schema_version": 2,
+  "description": "Conditional correction - different formula based on x value ranges",
+  "corrections": [
+    {
+      "name": "track_position_correction",
+      "version": 1,
+      "description": "Apply different correction based on x value, as example: if x<2, if 2<=x<5, if 5<=x<10, if x>=10",
+      "inputs": [
+        {
+          "name": "x",
+          "type": "real",
+          "description": "Raw X position [mm]"
+        }
+      ],
+      "output": {
+        "name": "x_corrected",
+        "type": "real",
+        "description": "Corrected X position [mm]"
+      },
+      "data": {
+        "nodetype": "binning",
+        "input": "x",
+        "edges": [0.0, 2.0, 5.0, 10.0, 20.0],
+        "content": [
+          {
+            "nodetype": "formula",
+            "expression": "x * 1.5 + 0.5",
+            "parser": "TFormula",
+            "variables": ["x"]
+          },
+          {
+            "nodetype": "formula",
+            "expression": "x * 1.2 + 0.3",
+            "parser": "TFormula",
+            "variables": ["x"]
+          },
+          {
+            "nodetype": "formula",
+            "expression": "x * 1.05 + 0.1",
+            "parser": "TFormula",
+            "variables": ["x"]
+          },
+          {
+            "nodetype": "formula",
+            "expression": "x * 1.01 - 0.05",
+            "parser": "TFormula",
+            "variables": ["x"]
+          }
+        ],
+        "flow": "clamp"
+      }
+    }
+  ],
+  "metadata": {
+    "input_column": "PPSLocalTrack_x",
+    "output_column": "PPSLocalTrack_x_corrected"
+  }
+}

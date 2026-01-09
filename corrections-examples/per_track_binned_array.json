@@ -1,0 +1,47 @@
+{
+  "schema_version": 2,
+  "description": "Per-track correction using binning with direct content array",
+  "corrections": [
+    {
+      "name": "x_per_track_binned",
+      "version": 1,
+      "description": "Binning approach: track indices 0-11 map to array of correction values",
+      "inputs": [
+        {
+          "name": "track_idx",
+          "type": "int",
+          "description": "Track index in event array"
+        }
+      ],
+      "output": {
+        "name": "correction_offset",
+        "type": "real",
+        "description": "Correction offset to add to X [mm]"
+      },
+      "data": {
+        "nodetype": "binning",
+        "input": "track_idx",
+        "edges": [0.0, 1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0],
+        "content": [
+          0.285,
+          0.155,
+          0.171,
+          0.202,
+          0.114,
+          0.166,
+          0.200,
+          0.080,
+          0.211,
+          0.212,
+          0.220,
+          0.092
+        ],
+        "flow": "clamp"
+      }
+    }
+  ],
+  "metadata": {
+    "input_column": "PPSLocalTrack_x",
+    "output_column": "PPSLocalTrack_x_corrected"
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "schema_version": 2,
+  "description": "Per-event and per-track correction - two-dimensional lookup",
+  "corrections": [
+    {
+      "name": "x_per_event_and_track",
+      "version": 1,
+      "description": "Correction based on both event number and track index within that event. Handles different array lengths per event.",
+      "inputs": [
+        {
+          "name": "rdfentry_",
+          "type": "int",
+          "description": "Event number (RDataFrame entry index)"
+        },
+        {
+          "name": "track_idx",
+          "type": "int",
+          "description": "Track index within the event"
+        }
+      ],
+      "output": {
+        "name": "correction_offset",
+        "type": "real",
+        "description": "Correction offset to add to X [mm]"
+      },
+      "data": {
+        "nodetype": "category",
+        "input": "rdfentry_",
+        "content": [
+          {
+            "key": 0,
+            "value": {
+              "nodetype": "category",
+              "input": "track_idx",
+              "content": [
+                {"key": 0, "value": 0.285},
+                {"key": 1, "value": 0.155},
+                {"key": 2, "value": 0.171},
+                {"key": 3, "value": 0.202},
+                {"key": 4, "value": 0.114},
+                {"key": 5, "value": 0.166},
+                {"key": 6, "value": 0.200}
+              ],
+              "default": 0.0
+            }
+          },
+          {
+            "key": 2,
+            "value": {
+              "nodetype": "category",
+              "input": "track_idx",
+              "content": [
+                {"key": 0, "value": 0.088},
+                {"key": 1, "value": 0.056},
+                {"key": 2, "value": 0.218}
+              ],
+              "default": 0.0
+            }
+          },
+          {
+            "key": 3,
+            "value": {
+              "nodetype": "category",
+              "input": "track_idx",
+              "content": [
+                {"key": 0, "value": 0.133},
+                {"key": 1, "value": 0.133},
+                {"key": 2, "value": 0.117},
+                {"key": 3, "value": 0.095},
+                {"key": 4, "value": 0.123},
+                {"key": 5, "value": 0.131},
+                {"key": 6, "value": 0.137}
+              ],
+              "default": 0.0
+            }
+          },
+          {
+            "key": 4,
+            "value": {
+              "nodetype": "category",
+              "input": "track_idx",
+              "content": [
+                {"key": 0, "value": 0.220},
+                {"key": 1, "value": 0.080},
+                {"key": 2, "value": 0.139},
+                {"key": 3, "value": 0.202},
+                {"key": 4, "value": 0.209},
+                {"key": 5, "value": 0.235},
+                {"key": 6, "value": 0.245},
+                {"key": 7, "value": 0.080},
+                {"key": 8, "value": 0.210},
+                {"key": 9, "value": 0.212},
+                {"key": 10, "value": 0.220},
+                {"key": 11, "value": 0.092}
+              ],
+              "default": 0.0
+            }
+          }
+        ],
+        "default": {
+          "nodetype": "category",
+          "input": "track_idx",
+          "content": [],
+          "default": 0.0
+        }
+      }
+    }
+  ],
+  "metadata": {
+    "input_column": "PPSLocalTrack_x",
+    "output_column": "PPSLocalTrack_x_corrected"
+  }
+}
