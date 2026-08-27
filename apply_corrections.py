@@ -54,11 +54,18 @@ def apply_corrections_hybrid(df, correction_file):
     print(f"✓ Loaded correction: {correction_name}")
 
     print("Extracting data from RDataFrame...")
-    data = df.AsNumpy(columns=[input_column])
-    n_events = len(data[input_column])
-    all_corrections = []
+    # IMPORTANT: also pull rdfentry_ — after any .Filter(), the surviving
+    # events keep their ORIGINAL tree entry numbers (not a compact 0..N-1
+    # sequence). AsNumpy() only returns values for surviving events, in
+    # order, so we must remember each row's real entry number to correctly
+    # map corrections back with Define("...", "get_corrections(rdfentry_)").
+    data = df.AsNumpy(columns=["rdfentry_", input_column])
+    entries = data["rdfentry_"]
+    n_events = len(entries)
+    all_corrections = []  # list of (entry_number, [corrected values...])
 
     for evt_idx in range(n_events):
+        entry = int(entries[evt_idx])
         x_array = data[input_column][evt_idx]
         n_tracks = len(x_array)
         event_corrections = []
@@ -72,7 +79,7 @@ def apply_corrections_hybrid(df, correction_file):
             except Exception as e:
                 event_corrections.append(x_val)
 
-        all_corrections.append(event_corrections)
+        all_corrections.append((entry, event_corrections))
 
         if (evt_idx + 1) % 5000 == 0:
             print(f"  Processed {evt_idx + 1}/{n_events} events...")
@@ -80,13 +87,15 @@ def apply_corrections_hybrid(df, correction_file):
 
     ROOT.gInterpreter.Declare('''
     #include <vector>
-    std::vector<std::vector<double>> g_corrections;
-    
-    ROOT::RVec<float> get_corrections(unsigned long long entry) {
-        if (entry < g_corrections.size()) {
-            ROOT::RVec<float> result(g_corrections[entry].size());
+    #include <unordered_map>
+    std::unordered_map<ULong64_t, std::vector<double>> g_corrections;
+
+    ROOT::RVec<float> get_corrections(ULong64_t entry) {
+        auto it = g_corrections.find(entry);
+        if (it != g_corrections.end()) {
+            ROOT::RVec<float> result(it->second.size());
             for (size_t i = 0; i < result.size(); ++i) {
-                result[i] = g_corrections[entry][i];
+                result[i] = it->second[i];
             }
             return result;
         }
@@ -95,8 +104,8 @@ def apply_corrections_hybrid(df, correction_file):
     ''')
 
     ROOT.g_corrections.clear()
-    for corr_list in all_corrections:
-        ROOT.g_corrections.push_back(ROOT.std.vector['double'](corr_list))
+    for entry, corr_list in all_corrections:
+        ROOT.g_corrections[entry] = ROOT.std.vector['double'](corr_list)
 
     df_corrected = df.Define(output_column, "get_corrections(rdfentry_)")
 

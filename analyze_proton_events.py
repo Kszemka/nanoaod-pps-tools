@@ -90,11 +90,17 @@ def filter_detector_specific_events(df, rp_id):
 
 def filter_xi_ranged_events(df, xi_min, xi_max):
     """
-    Select events with proton fractional momentum loss in specified range
-    Assumes PPSLocalTrack_xi variable exists
+    Select events with proton fractional momentum loss in specified range.
+
+    Prefers PPSLocalTrack_xi (original per-track logic) if that column is
+    present in the file; falls back to Proton_multiRP_xi (multi-RP proton
+    reconstruction) only if PPSLocalTrack_xi doesn't exist.
     """
-    filter_expr = f"ROOT::VecOps::Any(PPSLocalTrack_xi >= {xi_min} && PPSLocalTrack_xi <= {xi_max})"
-    df_filtered = df.Filter(filter_expr, f"Events with xi in [{xi_min}, {xi_max}]")
+    available_columns = [str(c) for c in df.GetColumnNames()]
+    xi_column = "PPSLocalTrack_xi" if "PPSLocalTrack_xi" in available_columns else "Proton_multiRP_xi"
+
+    filter_expr = f"ROOT::VecOps::Any({xi_column} >= {xi_min} && {xi_column} <= {xi_max})"
+    df_filtered = df.Filter(filter_expr, f"Events with xi in [{xi_min}, {xi_max}] (using {xi_column})")
     return df_filtered
 
 
