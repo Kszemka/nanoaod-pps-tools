@@ -85,29 +85,34 @@ def apply_corrections_hybrid(df, correction_file):
             print(f"  Processed {evt_idx + 1}/{n_events} events...")
 
 
-    ROOT.gInterpreter.Declare('''
+    curr_time = getattr(ROOT, "_my_time_uniq", 0) + 1
+    ROOT._my_time_uniq = curr_time
+
+    decl_str = f'''
     #include <vector>
     #include <unordered_map>
-    std::unordered_map<ULong64_t, std::vector<double>> g_corrections;
+    std::unordered_map<ULong64_t, std::vector<double>> g_corrections_{curr_time};
 
-    ROOT::RVec<float> get_corrections(ULong64_t entry) {
-        auto it = g_corrections.find(entry);
-        if (it != g_corrections.end()) {
+    ROOT::RVec<float> get_corrections_{curr_time}(ULong64_t entry) {{
+        auto it = g_corrections_{curr_time}.find(entry);
+        if (it != g_corrections_{curr_time}.end()) {{
             ROOT::RVec<float> result(it->second.size());
-            for (size_t i = 0; i < result.size(); ++i) {
+            for (size_t i = 0; i < result.size(); ++i) {{
                 result[i] = it->second[i];
-            }
+            }}
             return result;
-        }
+        }}
         return ROOT::RVec<float>();
-    }
-    ''')
+    }}
+    '''
+    ROOT.gInterpreter.Declare(decl_str)
 
-    ROOT.g_corrections.clear()
+    # Use getattr/setattr dynamically instead of writing literal code
+    root_map = getattr(ROOT, f"g_corrections_{curr_time}")
     for entry, corr_list in all_corrections:
-        ROOT.g_corrections[entry] = ROOT.std.vector['double'](corr_list)
+        root_map[entry] = ROOT.std.vector['double'](corr_list)
 
-    df_corrected = df.Define(output_column, "get_corrections(rdfentry_)")
+    df_corrected = df.Define(output_column, f"get_corrections_{curr_time}(rdfentry_)")
 
     print("✓ Correction column added")
     print()

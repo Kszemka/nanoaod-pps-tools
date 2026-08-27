@@ -400,7 +400,8 @@ def create_histograms_and_plots(df_with_pps, histogram_types=None, output_prefix
     ROOT.gROOT.SetBatch(True)
 
     for name, hist in histograms.items():
-        canvas_name = f"c_{name}"
+        # Używamy output_prefix w nazwie TCanvas, aby unikać warningów przy wielokrotnym wywoływaniu funkcji (zwłaszcza w Jupyterze)
+        canvas_name = f"c_{output_prefix}_{name}"
         output_png = os.path.join(data_dir, f"{output_prefix}_{name}.png")
 
         c = ROOT.TCanvas(canvas_name, name, 800, 600)
