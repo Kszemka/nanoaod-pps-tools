@@ -1,0 +1,57 @@
+{
+  "schema_version": 2,
+  "corrections": [
+    {
+      "name": "PPSLocalTrack_x_correction",
+      "description": "",
+      "version": 1,
+      "inputs": [
+        {
+          "name": "track_idx",
+          "type": "int",
+          "description": "Track index in event array"
+        }
+      ],
+      "output": {
+        "name": "correction_offset",
+        "type": "real",
+        "description": "Correction offset to add"
+      },
+      "data": {
+        "nodetype": "category",
+        "input": "track_idx",
+        "content": [
+          {
+            "key": 0,
+            "value": 1.0
+          },
+          {
+            "key": 1,
+            "value": 2.0
+          },
+          {
+            "key": 2,
+            "value": 3.0
+          },
+          {
+            "key": 3,
+            "value": 4.0
+          },
+          {
+            "key": 4,
+            "value": 5.0
+          },
+          {
+            "key": 5,
+            "value": 6.0
+          }
+        ],
+        "default": 0.0
+      }
+    }
+  ],
+  "metadata": {
+    "input_column": "PPSLocalTrack_x",
+    "output_column": "PPSLocalTrack_x_corrected"
+  }
+}

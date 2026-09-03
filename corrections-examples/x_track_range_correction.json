@@ -25,25 +25,25 @@
         "content": [
           {
             "nodetype": "formula",
-            "expression": "x * 1.5 + 0.5",
+            "expression": "x - 1",
             "parser": "TFormula",
             "variables": ["x"]
           },
           {
             "nodetype": "formula",
-            "expression": "x * 1.2 + 0.3",
+            "expression": "x + 1",
             "parser": "TFormula",
             "variables": ["x"]
           },
           {
             "nodetype": "formula",
-            "expression": "x * 1.05 + 0.1",
+            "expression": "x + 2",
             "parser": "TFormula",
             "variables": ["x"]
           },
           {
             "nodetype": "formula",
-            "expression": "x * 1.01 - 0.05",
+            "expression": "x + 3",
             "parser": "TFormula",
             "variables": ["x"]
           }

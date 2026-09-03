@@ -27,18 +27,18 @@
         "nodetype": "category",
         "input": "track_idx",
         "content": [
-          {"key": 0, "value": 0.285},
-          {"key": 1, "value": 0.155},
-          {"key": 2, "value": 0.171},
-          {"key": 3, "value": 0.202},
-          {"key": 4, "value": 0.114},
-          {"key": 5, "value": 0.166},
-          {"key": 6, "value": 0.200},
-          {"key": 7, "value": 0.080},
-          {"key": 8, "value": 0.211},
-          {"key": 9, "value": 0.212},
-          {"key": 10, "value": 0.220},
-          {"key": 11, "value": 0.092}
+          {"key": 0, "value": 1},
+          {"key": 1, "value": 2},
+          {"key": 2, "value": 3},
+          {"key": 3, "value": 4},
+          {"key": 4, "value": 5},
+          {"key": 5, "value": 6},
+          {"key": 6, "value": 7},
+          {"key": 7, "value": 8},
+          {"key": 8, "value": 9},
+          {"key": 9, "value": 10},
+          {"key": 10, "value": 11},
+          {"key": 11, "value": 12 }
         ],
         "default": 0.0
       }

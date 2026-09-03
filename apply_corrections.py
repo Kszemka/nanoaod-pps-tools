@@ -51,6 +51,16 @@ def apply_corrections_hybrid(df, correction_file):
     correction_name = list(cset.keys())[0]
     corr = cset[correction_name]
 
+    # The correction's declared "inputs" tell us what args evaluate() needs
+    # and in what order (e.g. ["x"], or ["track_idx"], or ["rdfentry_", "track_idx"]).
+    # Names other than "track_idx"/"rdfentry_" are assumed to refer to the X value.
+    correction_def = json_data['corrections'][0]
+    input_names = [inp['name'] for inp in correction_def.get('inputs', [])]
+    output_name = correction_def.get('output', {}).get('name', '')
+    # A correction whose output is an "offset" must be added to x; otherwise
+    # its result IS the corrected value.
+    is_offset = output_name == 'correction_offset'
+
     print(f"✓ Loaded correction: {correction_name}")
 
     print("Extracting data from RDataFrame...")
@@ -72,9 +82,12 @@ def apply_corrections_hybrid(df, correction_file):
 
         for track_idx in range(n_tracks):
             x_val = float(x_array[track_idx])
+            arg_values = {"track_idx": track_idx, "rdfentry_": entry}
+            args = [arg_values.get(name, x_val) for name in input_names]
 
             try:
-                corrected = corr.evaluate(x_val)
+                result = corr.evaluate(*args)
+                corrected = x_val + result if is_offset else result
                 event_corrections.append(corrected)
             except Exception as e:
                 event_corrections.append(x_val)
