@@ -12,6 +12,7 @@ from analyze_proton_events import (
     rdata_analysis,
     create_histograms_and_plots
 )
+import diamond_geometry
 
 
 def apply_corrections_hybrid(df, correction_file):
@@ -130,6 +131,100 @@ def apply_corrections_hybrid(df, correction_file):
     print("✓ Correction column added")
     print()
     return df_corrected, input_column, output_column
+
+
+def _diamond_kernel_registry():
+    """Declared-kernel cache, held on the ROOT module so it survives importlib.reload()."""
+    if not hasattr(ROOT, "_diamond_eff_kernels"):
+        ROOT._diamond_eff_kernels = {}
+    return ROOT._diamond_eff_kernels
+
+
+def _declare_diamond_kernel(rp_id, arm_key, pot_type, eff_values):
+    """
+    Declares (once per distinct parameter set) a C++ kernel mapping a track's (x, y, decRPId) to
+    its efficiency, and returns its name.
+
+    Cling cannot redefine an already-Declare'd function in the same process, so the registry is
+    keyed by everything baked into the source; re-calling with identical parameters reuses the
+    existing kernel instead of raising "redefinition of ...".
+    """
+    key = (pot_type, arm_key, int(rp_id), tuple(eff_values))
+    registry = _diamond_kernel_registry()
+    if key in registry:
+        return registry[key]
+
+    uid = len(registry)
+    region_func = f"diamondRegion_{uid}"
+    kernel_func = f"diamondEff_{uid}"
+    lut = ", ".join(f"{v!r}f" for v in eff_values)
+
+    decl_str = diamond_geometry.get_cpp_source(arm_key, pot_type, region_func) + f"""
+#include <array>
+
+template <typename Tx, typename Ty, typename Trp>
+ROOT::RVec<float> {kernel_func}(const ROOT::RVec<Tx>& x, const ROOT::RVec<Ty>& y,
+                                const ROOT::RVec<Trp>& rp) {{
+    constexpr std::array<float, {len(eff_values)}> kEfficiency = {{{lut}}};
+    ROOT::RVec<float> out(x.size(), 0.f);
+    for (std::size_t i = 0; i < x.size(); ++i) {{
+        if (static_cast<int>(rp[i]) != {int(rp_id)}) continue;
+        const int region = {region_func}(x[i], y[i]);
+        if (region >= 0) out[i] = kEfficiency[region];
+    }}
+    return out;
+}}
+"""
+    if not ROOT.gInterpreter.Declare(decl_str):
+        raise RuntimeError(f"Failed to JIT-compile diamond efficiency kernel {kernel_func}")
+
+    registry[key] = kernel_func
+    return kernel_func
+
+
+def apply_diamond_efficiency_jit(df, rp_id, arm_key, correction_json, pot_type="box"):
+    """
+    Adds a PPSLocalTrack_efficiency column, evaluated only for tracks in the given diamond RP
+    (rp_id), using the pot-type region geometry (diamond_geometry) + a region_idx -> efficiency
+    correctionlib JSON (built by build_diamond_efficiency_json).
+
+    The correction is evaluated once per region at setup time and baked into the compiled kernel
+    as a lookup table, so correctionlib stays the input format without sitting in the per-track
+    hot path. The kernel is a pure function of the track columns, so unlike a Python-side pass it
+    needs no rdfentry_ bookkeeping to survive an upstream .Filter(), and is safe under
+    EnableImplicitMT.
+
+    Args:
+        df: RDataFrame (already filtered to events with a track in rp_id, e.g. via
+            filter_detector_specific_events)
+        rp_id: decRPId of the diamond RP (e.g. 22/122 for box, 16/116 for cyl)
+        arm_key: "45" or "56", used to select the region ranges
+        correction_json: path to the region_idx -> efficiency correctionlib JSON
+        pot_type: "box" or "cyl", selects the region geometry
+
+    Returns:
+        RDataFrame with PPSLocalTrack_efficiency added (0.0 for tracks outside rp_id or outside
+        all regions).
+    """
+    print(f"=== Applying Diamond {pot_type.capitalize()} Efficiency ===")
+
+    cset = correctionlib.CorrectionSet.from_file(correction_json)
+    corr = cset[list(cset.keys())[0]]
+
+    print(f"Loaded correction: {corr.name}")
+
+    n_regions = diamond_geometry.POT_CONFIG[pot_type]["n_regions"]
+    eff_values = [float(corr.evaluate(region_idx)) for region_idx in range(n_regions)]
+
+    kernel_func = _declare_diamond_kernel(rp_id, arm_key, pot_type, eff_values)
+    df_with_efficiency = df.Define(
+        "PPSLocalTrack_efficiency",
+        f"{kernel_func}(PPSLocalTrack_x, PPSLocalTrack_y, PPSLocalTrack_decRPId)",
+    )
+
+    print("Efficiency column added")
+    print()
+    return df_with_efficiency
 
 
 def main():

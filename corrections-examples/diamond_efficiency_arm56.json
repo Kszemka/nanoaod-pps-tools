@@ -1,0 +1,45 @@
+{
+  "schema_version": 2,
+  "corrections": [
+    {
+      "name": "diamond_box_efficiency_arm56",
+      "description": "Diamond box-region proton efficiency for arm 56, run 396733",
+      "version": 1,
+      "inputs": [
+        {
+          "name": "region_idx",
+          "type": "int",
+          "description": "Box sub-region index (0/1/2), -1 if outside"
+        }
+      ],
+      "output": {
+        "name": "efficiency",
+        "type": "real",
+        "description": "Proton reconstruction efficiency"
+      },
+      "data": {
+        "nodetype": "category",
+        "input": "region_idx",
+        "content": [
+          {
+            "key": 0,
+            "value": 0.6997814955048121
+          },
+          {
+            "key": 1,
+            "value": 0.9267560184667487
+          },
+          {
+            "key": 2,
+            "value": 0.9449676614092818
+          }
+        ],
+        "default": 0.0
+      }
+    }
+  ],
+  "metadata": {
+    "input_column": "region_idx",
+    "output_column": "PPSLocalTrack_efficiency"
+  }
+}

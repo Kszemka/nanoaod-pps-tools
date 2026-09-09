@@ -18,6 +18,10 @@ Supported CORRECTION_TYPE values
 - "range_formula": INPUT_TXT_FILE holds one bin per line as
   "edge_low edge_high offset", e.g. `0 2 1` (adds 1 to x for x in [0, 2)).
   Bins must be contiguous and sorted. Mirrors x_track_range_correction.json.
+- "diamond_region_efficiency": not driven by CONFIG/INPUT_TXT_FILE; call
+  build_diamond_efficiency_json() directly with an efficiency.json path, arm
+  key ("45"/"56") and run number. Builds a region_idx (0/1/2) -> efficiency
+  Category lookup, default 0.0 for tracks outside all 3 box regions.
 """
 
 import json
@@ -107,6 +111,36 @@ def build_per_track_direct(values, name, description, default):
         ),
         data=data,
     )
+
+
+def build_region_efficiency_correction(box_values, name, description):
+    content = [schema.CategoryItem(key=idx, value=value) for idx, value in enumerate(box_values)]
+    data = schema.Category(nodetype="category", input="region_idx", content=content, default=0.0)
+    return schema.Correction(
+        name=name,
+        version=1,
+        description=description,
+        inputs=[
+            schema.Variable(
+                name="region_idx", type="int", description="Box sub-region index (0/1/2), -1 if outside"
+            )
+        ],
+        output=schema.Variable(name="efficiency", type="real", description="Proton reconstruction efficiency"),
+        data=data,
+    )
+
+
+def build_diamond_efficiency_json(efficiency_json_path, arm_key, run_number, out_path, pot_type="box"):
+    """Builds a region_idx -> efficiency correctionlib JSON from efficiency.json's pot_type values."""
+    with open(efficiency_json_path, "r", encoding="utf-8") as f:
+        efficiency_data = json.load(f)
+
+    region_values = efficiency_data[str(run_number)][arm_key][pot_type]
+    name = f"diamond_{pot_type}_efficiency_arm{arm_key}"
+    description = f"Diamond {pot_type}-region proton efficiency for arm {arm_key}, run {run_number}"
+    correction = build_region_efficiency_correction(region_values, name, description)
+    write_correction_set(correction, "region_idx", "PPSLocalTrack_efficiency", out_path)
+    return out_path
 
 
 def build_range_formula(rows, name, description, default):

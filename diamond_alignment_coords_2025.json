@@ -1,0 +1,170 @@
+{
+  "391699": {
+    "45": {
+      "cylX": -0.97,
+      "cylY": 7.8,
+      "cylAngle": 28.5,
+      "boxX": 0.4,
+      "boxY": 5.1,
+      "boxAngle": 28.5
+    },
+    "56": {
+      "cylX": -0.05,
+      "cylY": 5.8,
+      "cylAngle": 28.5,
+      "boxX": -0.4,
+      "boxY": 6.0,
+      "boxAngle": 28.5
+    }
+  },
+  "392925": {
+    "45": {
+      "cylShift": 2.0,
+      "boxShift": 2.0
+    },
+    "56": {
+      "cylShift": 2.5,
+      "boxShift": 3.0
+    }
+  },
+  "393276": {
+    "45": {
+      "cylShift": 2.0,
+      "boxShift": 2.0
+    },
+    "56": {
+      "cylShift": 5.0,
+      "boxShift": 6.0
+    }
+  },
+  "394619": {
+    "45": {
+      "cylShift": 8.0,
+      "boxShift": 4.0
+    },
+    "56": {
+      "cylShift": 5.0,
+      "boxShift": 6.0
+    }
+  },
+  "394861": {
+    "45": {
+      "cylShift": 11.0,
+      "boxShift": 7.0
+    },
+    "56": {
+      "cylShift": 8.0,
+      "boxShift": 9.0
+    }
+  },
+  "395392": {
+    "45": {
+      "cylShift": 13.0,
+      "boxShift": 9.0
+    },
+    "56": {
+      "cylShift": 12.0,
+      "boxShift": 13.0
+    }
+  },
+  "395893": {
+    "45": {
+      "cylShift": 16.0,
+      "boxShift": 12.0
+    },
+    "56": {
+      "cylShift": 14.0,
+      "boxShift": 16.0
+    }
+  },
+  "395984": {
+    "45": {
+      "cylShift": 16.0,
+      "boxShift": 12.0
+    },
+    "56": {
+      "cylShift": 15.0,
+      "boxShift": 16.0
+    }
+  },
+  "396733": {
+    "45": {
+      "cylShift": 16.0,
+      "boxShift": 12.0
+    },
+    "56": {
+      "cylShift": 26.0,
+      "boxShift": 26.0
+    }
+  },
+  "396988": {
+    "45": {
+      "cylShift": 18.0,
+      "boxShift": 14.0
+    },
+    "56": {
+      "cylShift": 26.0,
+      "boxShift": 26.0
+    }
+  },
+  "397226": {
+    "45": {
+      "cylShift": 21.0,
+      "boxShift": 17.0
+    },
+    "56": {
+      "cylShift": 28.0,
+      "boxShift": 29.0
+    }
+  },
+  "397529": {
+    "45": {
+      "cylShift": 23.0,
+      "boxShift": 19.0
+    },
+    "56": {
+      "cylShift": 28.0,
+      "boxShift": 30.0
+    }
+  },
+  "398027": {
+    "45": {
+      "cylShift": 23.0,
+      "boxShift": 16.0
+    },
+    "56": {
+      "cylShift": 2.0,
+      "boxShift": 2.0
+    }
+  },
+  "398288": {
+    "45": {
+      "cylShift": 26.0,
+      "boxShift": 18.0
+    },
+    "56": {
+      "cylShift": 4.0,
+      "boxShift": 4.0
+    }
+  },
+  "398515": {
+    "45": {
+      "cylShift": 26.0,
+      "boxShift": 22.0
+    },
+    "56": {
+      "cylShift": 4.0,
+      "boxShift": 4.0
+    }
+  },
+  "398600": {
+    "45": {
+      "cylShift": 30.0,
+      "boxShift": 26.0
+    },
+    "56": {
+      "cylShift": 6.0,
+      "boxShift": 8.0
+    }
+  }
+}

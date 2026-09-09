@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
+import array
 import ROOT
 import sys
 import os
 from enum import Enum
+
+import diamond_geometry
 
 
 class PPSHistogramType(Enum):
@@ -414,6 +417,168 @@ def create_histograms_and_plots(df_with_pps, histogram_types=None, output_prefix
     print("=== Histogram Creation Complete ===")
 
     return histograms
+
+
+def plot_diamond_efficiency_maps(
+    diamond_dfs, efficiency_data, run_number, arm_rp_ids, output_prefix=None, pot_type="box"
+):
+    """
+    Draw the 2D X/Y diamond efficiency map for each arm: a Histo2D of track hit
+    positions (color scale = entry counts), with the rotated sensor regions and
+    their efficiency values overlaid.
+
+    Args:
+        diamond_dfs: dict of arm_key -> RDataFrame with PPSLocalTrack_x_rp/y_rp/efficiency_rp
+                     columns already defined (see apply_diamond_efficiency_hybrid)
+        efficiency_data: parsed efficiency.json contents
+        run_number: run number key into efficiency_data
+        arm_rp_ids: dict of arm_key -> decRPId (e.g. {"45": 22, "56": 122})
+        output_prefix: prefix for output PNG files (default: "pps_diamond_eff_{pot_type}")
+        pot_type: "box" or "cyl", selects the region geometry and efficiency.json field
+
+    Returns:
+        Dictionary of arm_key -> output PNG path
+    """
+    if output_prefix is None:
+        output_prefix = f"pps_diamond_eff_{pot_type}"
+
+    data_dir = "data"
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+
+    output_pngs = {}
+    title = "cylindrical" if pot_type == "cyl" else pot_type
+
+    for arm_key in arm_rp_ids:
+        df_eff = diamond_dfs[arm_key]
+        region_values = efficiency_data[str(run_number)][arm_key][pot_type]
+
+        x_min, x_max, y_min, y_max = diamond_geometry.get_plot_range(arm_key, pot_type=pot_type)
+        # Reconstructed x sits on a ~0.45mm detector pitch; one bin per pitch is the finest
+        # binning that doesn't alias into empty-vs-spike stripes.
+        n_bins_x = round((x_max - x_min) / 0.45)
+        n_bins_y = round((y_max - y_min) / 0.45)
+        h_eff = df_eff.Histo2D(
+            (f"h_eff_xy_{pot_type}_{arm_key}", f"{arm_key} {title} time-tracks efficiency per diamond;X [mm];Y [mm]",
+             n_bins_x, x_min, x_max, n_bins_y, y_min, y_max),
+            "PPSLocalTrack_x_rp", "PPSLocalTrack_y_rp",
+        )
+
+        polygons = diamond_geometry.build_region_polygons(arm_key, pot_type)
+
+        c = ROOT.TCanvas(f"c_{output_prefix}_{arm_key}", arm_key, 800, 600)
+        h_eff.Draw("COLZ")
+        c.Update()  # force stats box creation so it can be repositioned below
+
+        # Stats box defaults to the top-right, overlapping the COLZ palette -- move it to top-left.
+        stats = h_eff.FindObject("stats")
+        if stats:
+            stats.SetX1NDC(0.15)
+            stats.SetX2NDC(0.45)
+            stats.SetY1NDC(0.75)
+            stats.SetY2NDC(0.9)
+
+        # Keep polygon/label objects alive until SaveAs, ROOT does not own them.
+        poly_objects = []
+        for region_idx, polygon in enumerate(polygons):
+            xs = array.array("d", [p[0] for p in polygon] + [polygon[0][0]])
+            ys = array.array("d", [p[1] for p in polygon] + [polygon[0][1]])
+            pl = ROOT.TPolyLine(len(xs), xs, ys)
+            pl.SetLineColor(ROOT.kBlack)
+            pl.SetLineWidth(2)
+            pl.Draw("L SAME")
+            poly_objects.append(pl)
+
+            cx = sum(p[0] for p in polygon) / len(polygon)
+            cy = sum(p[1] for p in polygon) / len(polygon)
+            t = ROOT.TLatex()
+            t.SetTextAlign(22)
+            t.SetTextSize(0.05)
+            t.DrawLatex(cx, cy, f"{region_values[region_idx]:.2f}")
+            poly_objects.append(t)
+
+        c.Modified()
+        c.Update()
+
+        output_png = os.path.join(data_dir, f"{output_prefix}_arm{arm_key}.png")
+        c.SaveAs(output_png)
+        c.Close()  # prevent ROOT's Jupyter hook from also auto-displaying the live canvas
+        output_pngs[arm_key] = output_png
+
+    return output_pngs
+
+
+def plot_all_pots_with_regions(df_baseline, arm_rp_ids, efficiency_data, run_number, pot_type="box"):
+    """
+    Draw the 2D X/Y map of all-pot track hits (not restricted to a single RP) for events
+    selected by each arm's RP, with the pot type's rotated sensor regions and efficiency
+    values overlaid, for comparison against plot_diamond_efficiency_maps' single-RP maps.
+
+    Args:
+        df_baseline: RDataFrame with at least nPPSLocalTrack > 0 already applied
+        arm_rp_ids: dict of arm_key -> decRPId (e.g. {"45": 22, "56": 122})
+        efficiency_data: parsed efficiency.json contents
+        run_number: run number key into efficiency_data
+        pot_type: "box" or "cyl", selects the region geometry and efficiency.json field
+
+    Returns:
+        Dictionary of arm_key -> output PNG path
+    """
+    data_dir = "data"
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+
+    output_pngs = {}
+    for arm_key, rp_id in arm_rp_ids.items():
+        df_rp = filter_detector_specific_events(df_baseline, rp_id)
+        x_min, x_max, y_min, y_max = diamond_geometry.get_plot_range(arm_key, pot_type=pot_type)
+        h_all_pots = df_rp.Histo2D(
+            (f"h_all_pots_xy_{pot_type}_{arm_key}",
+             f"Arm {arm_key}: all-pot tracks (events with RP {rp_id});X [mm];Y [mm]",
+             100, x_min, x_max, 100, y_min, y_max),
+            "PPSLocalTrack_x", "PPSLocalTrack_y",
+        )
+
+        region_values = efficiency_data[str(run_number)][arm_key][pot_type]
+        polygons = diamond_geometry.build_region_polygons(arm_key, pot_type)
+
+        c = ROOT.TCanvas(f"c_all_pots_{pot_type}_{arm_key}", arm_key, 800, 600)
+        # Custom stepped contour levels instead of linear/log-z: coarse, hand-picked bands
+        # so 0-vs-any-hits stands out without relying on a smooth log/power transform.
+        z_max = h_all_pots.GetMaximum()
+        levels = array.array("d", sorted(set(
+            [0.0] + [z_max * frac for frac in (0.002, 0.01, 0.03, 0.08, 0.18, 0.35, 0.6, 1.0)]
+        )))
+        h_all_pots.SetContour(len(levels), levels)
+        h_all_pots.Draw("COLZ")
+
+        poly_objects = []
+        for region_idx, polygon in enumerate(polygons):
+            xs = array.array("d", [p[0] for p in polygon] + [polygon[0][0]])
+            ys = array.array("d", [p[1] for p in polygon] + [polygon[0][1]])
+            pl = ROOT.TPolyLine(len(xs), xs, ys)
+            pl.SetLineColor(ROOT.kBlack)
+            pl.SetLineWidth(2)
+            pl.Draw("L SAME")
+            poly_objects.append(pl)
+
+            cx = sum(p[0] for p in polygon) / len(polygon)
+            cy = sum(p[1] for p in polygon) / len(polygon)
+            t = ROOT.TLatex()
+            t.SetTextAlign(22)
+            t.SetTextSize(0.05)
+            t.DrawLatex(cx, cy, f"{region_values[region_idx]:.2f}")
+            poly_objects.append(t)
+
+        c.Modified()
+        c.Update()
+
+        output_png = os.path.join(data_dir, f"pps_all_pots_xy_{pot_type}_arm{arm_key}.png")
+        c.SaveAs(output_png)
+        c.Close()
+        output_pngs[arm_key] = output_png
+
+    return output_pngs
 
 
 def main():
