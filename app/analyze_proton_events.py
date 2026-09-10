@@ -6,7 +6,7 @@ import sys
 import os
 from enum import Enum
 
-import diamond_geometry
+import app.diamond_geometry as diamond_geometry
 
 
 class PPSHistogramType(Enum):
@@ -429,7 +429,7 @@ def plot_diamond_efficiency_maps(
 
     Args:
         diamond_dfs: dict of arm_key -> RDataFrame with PPSLocalTrack_x_rp/y_rp/efficiency_rp
-                     columns already defined (see apply_diamond_efficiency_hybrid)
+                     columns already defined (see apply_diamond_efficiency_jit)
         efficiency_data: parsed efficiency.json contents
         run_number: run number key into efficiency_data
         arm_rp_ids: dict of arm_key -> decRPId (e.g. {"45": 22, "56": 122})

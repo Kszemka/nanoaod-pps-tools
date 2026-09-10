@@ -6,13 +6,13 @@ import os
 import correctionlib
 
 # Import analysis functions from analyze_proton_events
-from analyze_proton_events import (
+from app.analyze_proton_events import (
     PPSHistogramType,
     filter_single_arm_events,
     rdata_analysis,
     create_histograms_and_plots
 )
-import diamond_geometry
+import app.diamond_geometry as diamond_geometry
 
 
 def apply_corrections_hybrid(df, correction_file):
