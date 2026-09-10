@@ -264,7 +264,29 @@ def plot_all(records, results_dir):
         )
         save(fig, "07_thread_scaling.png")
 
-    # (8) RSS over time, from the sampler.
+    # (9) Cluster-count control: same data, different TTree layout.
+    clusters = [r for r in ok if str(r.get("label", "")).startswith("clusters_")]
+    if clusters:
+        fig, ax = plt.subplots(figsize=(7, 4.5))
+        for tag in ("fine", "coarse"):
+            points = sorted(
+                (r["threads"], r["wall_loop"])
+                for r in clusters
+                if r.get("tag") == tag and r.get("threads")
+            )
+            if points:
+                counts, walls = zip(*points)
+                baseline = walls[0]
+                ax.plot(counts, [baseline / w for w in walls], marker="o", label=f"{tag} clustering")
+        ax.set_xscale("log", base=2)
+        ax.set_xlabel("threads")
+        ax.set_ylabel("speedup vs fewest threads")
+        ax.set_title("Same data, different cluster count: the plateau follows the layout")
+        ax.legend(fontsize=8)
+        ax.grid(alpha=0.3, which="both")
+        save(fig, "09_cluster_control.png")
+
+    # (10) RSS over time, from the sampler.
     samples = [f for f in os.listdir(results_dir) if f.startswith("rss_") and f.endswith(".csv")]
     if samples:
         fig, ax = plt.subplots(figsize=(7, 4.5))

@@ -167,7 +167,26 @@ a nie efektem ubocznym rozmiaru).
 | XL | 100 | 25 GB | `jit`, sweep wątków (Helios) |
 | seria | 1,2,4,8,16,32,64 | 0.25–16 GB | wykresy „vs rozmiar danych" |
 
-Razem ~50 GB scratcha.
+Razem ~70 GB.
+
+**Kompresja: ZSTD poziom 5**, nie LZMA:9 z pliku źródłowego. Zmierzone na jednej kopii:
+
+| algorytm | czas zapisu | rozmiar |
+|---|---|---|
+| LZMA:9 (źródło) | 156 s | 252 MB |
+| ZSTD:5 (datasety) | 70 s | 345 MB |
+| LZ4:4 | 73 s | 493 MB |
+
+Do odnotowania w opisie wyników: **dekompresja jest częścią mierzonej pętli zdarzeń**, więc
+wybór algorytmu wpływa na bezwzględne liczby. Przy ZSTD mniejsza część czasu przypada na
+rozpakowywanie koszyków, a większa na samo filtrowanie, niż byłoby to przy LZMA używanym
+w produkcyjnym NanoAOD CMS. Porównania *między implementacjami* pozostają ważne, bo wszystkie
+czytają ten sam plik; nieważne byłoby zestawianie tych czasów z pomiarami na danych LZMA.
+
+Ustawione na sztywno w `make_all_datasets.sh`, a nie przez zmienną środowiskową — pominięcie
+jej przy jednym pliku dałoby serię z mieszanymi algorytmami i unieważniło wykres. Faktyczny
+algorytm każdego pliku trafia do `dataset_info.json` (`compression_algorithm`,
+`compression_level`), więc da się to zweryfikować po fakcie.
 
 **Różne rozmiary dla różnych implementacji są zamierzone.** Porównanie idzie wyłącznie przez
 throughput (evt/s), nigdy przez surowy wall time — inaczej Python nie zmieściłby się w limicie

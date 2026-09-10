@@ -60,6 +60,8 @@ def describe(path, tree_name="Events"):
         "n_branches": tree.GetListOfBranches().GetEntries(),
         "tot_bytes": int(tree.GetTotBytes()),
         "zip_bytes": int(tree.GetZipBytes()),
+        "compression_algorithm": int(f.GetCompressionAlgorithm()),
+        "compression_level": int(f.GetCompressionLevel()),
         "root_version": ROOT.gROOT.GetVersion(),
         "branches": per_branch,
     }
