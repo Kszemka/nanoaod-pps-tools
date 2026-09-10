@@ -44,9 +44,8 @@ export MACHINE
 # DS_S is the unmodified source file: the Python paths are single-threaded, so its clustering
 # is irrelevant to them and re-encoding a 1x copy would buy nothing.
 DS_S="${DS_S:-$REPO_ROOT/examples/test.root}"
-DS_M="${DS_M:-$DATA_DIR/ds_m.root}"
 DS_L="${DS_L:-$DATA_DIR/ds_l.root}"
-DS_XL="${DS_XL:-$DATA_DIR/ds_xl.root}"
+DS_L_COARSE="${DS_L_COARSE:-$DATA_DIR/ds_l_coarse.root}"
 SCALE_SERIES="${SCALE_SERIES:-1 2 4 8 16 32 64}"
 
 mkdir -p "$RESULTS"
@@ -222,6 +221,7 @@ cmd_full() {
     done
 
     cmd_scaling
+    cmd_clusters
     cmd_first_read
     "$PY" "$TEST_DIR/plot_results.py" --results "$RESULTS"
 }
@@ -242,15 +242,28 @@ cmd_scaling() {
     done
 }
 
+# Control for the thread-scaling plateau. Same size and contents as DS_L, an order of magnitude
+# fewer TTree clusters: RDataFrame hands out work per cluster, so if the curve flattens earlier
+# here, the plateau belongs to the file layout and not to the code.
+cmd_clusters() {
+    [[ -f "$DS_L_COARSE" ]] || return 0
+    echo "=== cluster-count control ==="
+    for threads in $THREADS_LIST; do
+        run_one "clusters_fine_t${threads}" bench_efficiency.py \
+            --input "$DS_L" --impl jit --threads "$threads" --tag fine
+        run_one "clusters_coarse_t${threads}" bench_efficiency.py \
+            --input "$DS_L_COARSE" --impl jit --threads "$threads" --tag coarse
+    done
+}
+
 # Cheap proxy for I/O cost: the first touch of a file reads from storage, later ones from the
 # page cache. Replaces a true cold-cache experiment, which would need a dataset several times
 # the node's RAM.
 cmd_first_read() {
-    local dataset="${DS_XL:-$DS_L}"
-    [[ -f "$dataset" ]] || return 0
+    [[ -f "$DS_L" ]] || return 0
     echo "=== first read vs warm cache ==="
     for attempt in 1 2 3; do
-        run_one "cache_eff_jit_a${attempt}" bench_efficiency.py --input "$dataset" --impl jit
+        run_one "cache_eff_jit_a${attempt}" bench_efficiency.py --input "$DS_L" --impl jit
     done
 }
 
@@ -258,10 +271,11 @@ case "${1:-full}" in
     quick) cmd_quick ;;
     validate) cmd_validate ;;
     scaling) cmd_scaling ;;
+    clusters) cmd_clusters ;;
     cache) cmd_first_read ;;
     full) cmd_full ;;
     *)
-        echo "Usage: $0 {quick|validate|scaling|cache|full}" >&2
+        echo "Usage: $0 {quick|validate|scaling|clusters|cache|full}" >&2
         exit 1
         ;;
 esac

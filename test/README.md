@@ -70,6 +70,25 @@ micromamba env create -f nanoaod-pps-tools/test/environment.yml
 micromamba activate pps-bench
 ```
 
+### 2b. Git LFS
+
+`examples/test.root` jest trzymany w Git LFS. Bez `git-lfs` klon daje w tym miejscu
+134-bajtowy plik tekstowy ze wskaźnikiem zamiast 240 MB danych, a wszystko dalej wywala się
+na nieczytelnym pliku ROOT. `environment.yml` instaluje `git-lfs`, więc po aktywacji
+środowiska wystarczy:
+
+```bash
+cd $SCRATCH/bench/nanoaod-pps-tools
+git lfs install
+git lfs pull
+ls -la examples/test.root        # ma mieć ~240 MB, nie 134 B
+```
+
+`run_all.sh` sprawdza to sam i przerywa z czytelnym komunikatem, jeśli trafi na wskaźnik.
+
+Alternatywa, jeśli LFS sprawia kłopoty: skopiuj plik wprost z laptopa —
+`scp examples/test.root <login>@ares.cyfronet.pl:'$SCRATCH'/bench/nanoaod-pps-tools/examples/`.
+
 Sprawdzenie: `python -c "import ROOT, correctionlib, numpy; print(ROOT.gROOT.GetVersion())"`.
 
 ### 3. Dane
@@ -123,12 +142,45 @@ kompresji w obrębie jednego wykresu.
 
 ### 4. Test dymny na węźle obliczeniowym
 
+Jako zadanie wsadowe, nie przez `srun --pty`: zerwane połączenie SSH zabija sesję
+interaktywną razem z biegiem, a zakolejkowane zadanie liczy się dalej i zapisuje wyjście
+do pliku.
+
 ```bash
-srun -A <grant>-cpu -p plgrid-testing -N1 -n1 -c4 --time=0:20:00 --pty bash -l
-micromamba activate pps-bench
 cd $SCRATCH/bench/nanoaod-pps-tools
-QUICK_INPUT=$SCRATCH/bench/data/ds_s.root ./test/run_benchmark.sh validate
-QUICK_INPUT=$SCRATCH/bench/data/ds_s.root ./test/run_benchmark.sh quick
+sed -i "s/<GRANT>/twoj-grant/" test/slurm_smoke.sbatch
+mkdir -p $SCRATCH/bench/logs
+sbatch --output=$SCRATCH/bench/logs/smoke-%j.out \
+       --error=$SCRATCH/bench/logs/smoke-%j.err \
+       test/slurm_smoke.sbatch
+
+squeue -u $USER                              # postęp
+tail -f $SCRATCH/bench/logs/smoke-<jobid>.out
+```
+
+Ścieżek `$SCRATCH` nie da się użyć w dyrektywach `#SBATCH` (są czytane przed rozwinięciem
+zmiennych powłoki), dlatego katalog logów podaje się w wierszu poleceń. Bez tego pliki
+`smoke-<jobid>.out` lądują w katalogu, z którego wywołano `sbatch`.
+
+Zadanie ma się skończyć linią `RESULT: all checks passed` i wypisaniem `bench.csv`.
+Jeśli walidacja nie przechodzi, nie uruchamiaj pomiarów — żadna liczba nie będzie wtedy
+nic warta.
+
+Jeśli mimo wszystko wolisz sesję interaktywną, uruchom ją w `tmux`, żeby przeżyła
+rozłączenie:
+
+```bash
+tmux new -s bench
+srun -A <GRANT>-cpu -p plgrid-testing -N1 -n1 -c4 --time=0:30:00 --pty bash -l
+# Ctrl-b d odłącza, `tmux attach -t bench` wraca
+```
+
+Warto też ograniczyć same rozłączenia — na laptopie w `~/.ssh/config`:
+
+```
+Host ares.cyfronet.pl
+    ServerAliveInterval 60
+    ServerAliveCountMax 10
 ```
 
 ### 5. Pełny bieg
@@ -147,9 +199,10 @@ obciążenie sąsiadów, nie własny kod.
 ### 6. Kontrola i odbiór wyników
 
 ```bash
-sacct -j <jobid> --format=JobID,Elapsed,MaxRSS,AveCPU,NCPUS
-seff <jobid>
+sacct -j <jobid> --format=JobID,JobName,State,Elapsed,MaxRSS,AveCPU,NCPUS,ReqMem
 ```
+
+(`seff` nie jest zainstalowany na Aresie.)
 
 `MaxRSS` z `sacct` powinien zgadzać się z kolumną `time_maxrss_kb` w `results/bench.csv` —
 to niezależne potwierdzenie, że pomiar pamięci jest poprawny.

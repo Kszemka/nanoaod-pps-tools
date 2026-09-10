@@ -112,7 +112,7 @@ def build_efficiency_json(arm_key, pot_type, out_dir="/tmp"):
     """Writes the region_idx -> efficiency correctionlib JSON. Setup only, never timed."""
     from build_correction import build_diamond_efficiency_json
 
-    efficiency_file = os.path.join(REPO_ROOT, "efficiency.json")
+    efficiency_file = os.path.join(REPO_ROOT, "app", "efficiency.json")
     with open(efficiency_file) as f:
         run_number = int(next(iter(json.load(f))))
     out_path = os.path.join(out_dir, f"bench_eff_{pot_type}_{arm_key}.json")
