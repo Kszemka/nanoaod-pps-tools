@@ -22,6 +22,8 @@ set -euo pipefail
 
 export MACHINE=helios
 export SCRATCH_BENCH="${SCRATCH}/bench"
+# Without this micromamba looks for environments under $HOME instead of the one on scratch.
+export MAMBA_ROOT_PREFIX="${SCRATCH_BENCH}/micromamba"
 
 eval "$("${SCRATCH_BENCH}/micromamba/bin/micromamba" shell hook -s bash)"
 micromamba activate pps-bench
@@ -42,4 +44,6 @@ else
     srun --cpu-bind=cores bash test/run_all.sh --skip-datasets
 fi
 
-seff "${SLURM_JOB_ID}" || true
+# Independent confirmation of the numbers the script collected itself. `seff` is not installed
+# on Ares, so read the accounting database directly.
+sacct -j "${SLURM_JOB_ID}" --format=JobID,JobName,State,Elapsed,MaxRSS,AveCPU,NCPUS,ReqMem || true

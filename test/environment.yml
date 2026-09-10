@@ -7,4 +7,7 @@ dependencies:
   - correctionlib
   - numpy
   - matplotlib
+  # examples/test.root is stored in Git LFS; without this a clone yields a 134-byte pointer
+  # file and every run fails on an unreadable ROOT file.
+  - git-lfs
   - pip

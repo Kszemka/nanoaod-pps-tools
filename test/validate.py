@@ -12,10 +12,12 @@ Correctness checks that must pass before any timing number is worth reading.
 
 import argparse
 import json
+import math
 import os
-import random
 import subprocess
 import sys
+
+import numpy as np
 
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(TEST_DIR)
@@ -33,27 +35,81 @@ import bench_common as bc  # noqa: E402
 TOLERANCE = 1e-6
 
 
-def check_geometry(n_points=100000, seed=1):
+def check_geometry(n_points=100000, seed=1, scalar_sample=2000):
+    """
+    Compares the generated C++ assignRegion() with diamond_geometry.assign_region().
+
+    The C++ side is called once per (pot, arm) on the whole point array rather than once per
+    point: the cppyy call overhead dwarfs the handful of arithmetic operations inside, and
+    per-point calls made this check take minutes instead of a fraction of a second.
+
+    The Python reference is vectorised the same way, so a subsample is additionally compared
+    against the original scalar assign_region() -- otherwise a bug shared by both vectorised
+    versions could pass unnoticed.
+    """
     print("== TEST 3 geometry: generated C++ vs Python ==")
+    rng = np.random.default_rng(seed)
+    xs = rng.uniform(-10.0, 30.0, n_points)
+    ys = rng.uniform(-15.0, 25.0, n_points)
+
     ok = True
     for pot_type in ("box", "cyl"):
         for arm_key in ("45", "56"):
             func_name = f"validateRegion_{pot_type}_{arm_key}"
+            bulk_name = f"{func_name}_bulk"
             ROOT.gInterpreter.Declare(
                 diamond_geometry.get_cpp_source(arm_key, pot_type, func_name)
+                + f"""
+ROOT::RVec<int> {bulk_name}(const ROOT::RVec<double>& xs, const ROOT::RVec<double>& ys) {{
+    ROOT::RVec<int> out(xs.size());
+    for (std::size_t i = 0; i < xs.size(); ++i) out[i] = {func_name}(xs[i], ys[i]);
+    return out;
+}}
+"""
             )
-            cpp = getattr(ROOT, func_name)
-            random.seed(seed)
-            mismatches = 0
-            for _ in range(n_points):
-                x = random.uniform(-10.0, 30.0)
-                y = random.uniform(-15.0, 25.0)
-                if cpp(x, y) != diamond_geometry.assign_region(x, y, arm_key, pot_type):
-                    mismatches += 1
-            status = "OK" if mismatches == 0 else "MISMATCH"
-            print(f"  {pot_type} arm{arm_key}: {mismatches}/{n_points} -> {status}")
-            ok = ok and mismatches == 0
+            cpp_regions = np.asarray(
+                getattr(ROOT, bulk_name)(ROOT.VecOps.AsRVec(xs), ROOT.VecOps.AsRVec(ys))
+            )
+            py_regions = _assign_region_vectorised(xs, ys, arm_key, pot_type)
+
+            mismatches = int(np.count_nonzero(cpp_regions != py_regions))
+            scalar_bad = sum(
+                1
+                for i in range(0, n_points, max(n_points // scalar_sample, 1))
+                if py_regions[i]
+                != diamond_geometry.assign_region(xs[i], ys[i], arm_key, pot_type)
+            )
+            status = "OK" if mismatches == 0 and scalar_bad == 0 else "MISMATCH"
+            print(
+                f"  {pot_type} arm{arm_key}: {mismatches}/{n_points} vs C++, "
+                f"{scalar_bad} vs scalar Python -> {status}"
+            )
+            ok = ok and mismatches == 0 and scalar_bad == 0
     return ok
+
+
+def _assign_region_vectorised(xs, ys, arm_key, pot_type):
+    """NumPy transcription of diamond_geometry.assign_region, for the whole array at once."""
+    config = diamond_geometry.POT_CONFIG[pot_type]
+    center_x, center_y = config["centers"][arm_key]
+    theta = math.radians(config["angles_deg"][arm_key])
+    cos_theta, sin_theta = math.cos(theta), math.sin(theta)
+    n_regions = config["n_regions"]
+    size_x = diamond_geometry.DIAMOND_SIZE_X
+    half_y = diamond_geometry.DIAMOND_SIZE_Y / 2
+
+    dx, dy = xs - center_x, ys - center_y
+    u = dx * cos_theta + dy * sin_theta
+    v = -dx * sin_theta + dy * cos_theta
+
+    edges = np.array([-n_regions * size_x / 2 + i * size_x for i in range(n_regions + 1)])
+    # side="left" minus one reproduces assign_region's inclusive-on-both-ends bins: a u landing
+    # exactly on an internal edge falls into the lower region, as the scalar loop does.
+    region = np.searchsorted(edges, u, side="left") - 1
+    region = np.where(u == edges[0], 0, region)
+
+    inside = (v >= -half_y) & (v <= half_y) & (region >= 0) & (region < n_regions)
+    return np.where(inside, region, -1)
 
 
 def run_bench(script, *args):
@@ -92,10 +148,18 @@ def main():
     parser.add_argument("--input", default=os.path.join(REPO_ROOT, "examples", "test.root"))
     parser.add_argument("--max-events", type=int, default=0)
     parser.add_argument("--grid-points", type=int, default=100000)
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=0,
+        help="also check that the compiled kernel gives identical results on N threads",
+    )
     args = parser.parse_args()
 
     common = ["--input", args.input]
     if args.max_events:
+        # Range() and ImplicitMT are mutually exclusive, so the threaded check needs the
+        # whole file.
         common += ["--max-events", str(args.max_events)]
 
     ok = compare(
@@ -149,6 +213,29 @@ def main():
             ),
         ],
     )
+
+    if args.threads > 1:
+        if args.max_events:
+            print("\n== thread safety: skipped (--max-events forces a single thread) ==")
+        else:
+            # The JIT kernel is stateless by construction; this is what proves it stayed that
+            # way. A race here would show up as a small, run-dependent drift in eff_sum.
+            ok &= compare(
+                f"TEST 3 -- thread safety (1 vs {args.threads} threads)",
+                [
+                    (
+                        "jit / 1 thread",
+                        run_bench("bench_efficiency.py", *common, "--impl", "jit")["checksums"],
+                    ),
+                    (
+                        f"jit / {args.threads} threads",
+                        run_bench(
+                            "bench_efficiency.py", *common, "--impl", "jit",
+                            "--threads", str(args.threads),
+                        )["checksums"],
+                    ),
+                ],
+            )
 
     print("\nRESULT:", "all checks passed" if ok else "FAILURES -- do not trust the timings")
     return 0 if ok else 1
