@@ -83,6 +83,13 @@ if [[ -f "$SOURCE_ROOT" ]] && head -c 40 "$SOURCE_ROOT" | grep -q 'git-lfs'; the
     exit 1
 fi
 
+SOURCE_ROOT="$REPO_ROOT/examples/test.root"
+if [[ -f "$SOURCE_ROOT" ]] && head -c 40 "$SOURCE_ROOT" | grep -q 'git-lfs'; then
+    echo "ERROR: $SOURCE_ROOT is a Git LFS pointer, not the actual file." | tee -a "$LOG" >&2
+    echo "       Run: git lfs install && git lfs pull" | tee -a "$LOG" >&2
+    exit 1
+fi
+
 if step 1 "correctness"; then
     "$PY" "$TEST_DIR/validate.py" 2>&1 | tee -a "$LOG"
 fi
