@@ -1,13 +1,26 @@
 #!/usr/bin/env python3
 """
-Pure-Python implementations of the same three operations, reading through AsNumpy().
+PyROOT's own materialisation path: the same three operations read through AsNumpy().
 
-Two modes throughout:
-  vector - NumPy on flattened jagged arrays (how you would sensibly write it)
-  loop   - plain Python for-loops (the naive version)
+Read the name carefully -- this is not "the NumPy implementation". `AsNumpy()` on a jagged
+branch returns a NumPy array *of RVec objects*, one per event, so `_flatten()` and `_any_in()`
+below cannot avoid a Python-level loop over events no matter how they are written. The measured
+consequence is that the "vectorised" mode is not reliably faster than the naive one (4.20 s
+against 2.86 s for TEST 1 on examples/test.root), and that the TEST 2 chain costs 1.61 s at
+chain-len 1, where the only column is a flat integer, against 25.6 s at chain-len 2, where the
+first jagged branch appears.
 
-Both materialise every column they touch in full before doing any work; that is the structural
-difference from the RDataFrame path, and it is what the memory and bytes-read plots measure.
+What this file therefore measures is the cost of getting ROOT data into Python through PyROOT.
+For genuinely columnar Python -- a flat values buffer with offsets, operated on in compiled
+code -- see impl_uproot.py, which is the fair comparison for RDataFrame.
+
+Three modes throughout:
+  vector              - NumPy over the materialised columns, every step on every event
+  vector-shortcircuit - the same, but narrowing to survivors between steps, as RDataFrame does
+  loop                - plain Python for-loops (the naive version)
+
+All of them materialise every column they touch in full before doing any work; that is the
+structural difference from the RDataFrame path, and it is what the memory plots measure.
 
 Geometry constants come from diamond_geometry.POT_CONFIG rather than being re-typed here, so
 this stays a different *implementation* of the same definition rather than a second definition.
@@ -58,9 +71,8 @@ def _any_in(jagged, values):
     )
 
 
-def _step_mask(name, data, rp_id):
-    """Boolean per-event mask for one chain step, evaluated over all events."""
-    column = data[bc.CHAIN_COLUMNS[name]]
+def _step_mask(name, column, rp_id):
+    """Boolean per-event mask for one chain step, over whichever events it is handed."""
     if name == "pps":
         return np.asarray(column) > 0
     if name == "double_arm":
@@ -93,27 +105,39 @@ def _step_passes(name, event, rp_id):
     return any(lo <= float(v) <= hi for v in event)
 
 
-def chain_python(df, chain_len, mode, rp_id=bc.DEFAULT_RP_ID):
+def chain_python(df, chain_len, mode, rp_id=bc.DEFAULT_RP_ID, order="notebook"):
     # Every column the chain needs is pulled up front -- unlike RDataFrame, there is no way to
     # read the later columns only for the events that survived the earlier filters. All of the
     # filtering happens here too, including the nPPSLocalTrack > 0 step: leaving it to
     # RDataFrame would mean measuring RDataFrame doing part of Python's work.
-    columns = bc.chain_columns(chain_len)
+    columns = bc.chain_columns(chain_len, order)
+    steps = bc.chain_steps(chain_len, order)
     data = df.AsNumpy(columns)
     n_events = len(data[columns[0]])
     counts = [n_events]
 
     if mode == "loop":
         surviving = list(range(n_events))
-        for name in bc.CHAIN_STEPS[:chain_len]:
+        for name in steps:
             column = data[bc.CHAIN_COLUMNS[name]]
             surviving = [i for i in surviving if _step_passes(name, column[i], rp_id)]
             counts.append(len(surviving))
         return {"final": counts[-1], "intermediate": counts, "event_loops": 1}
 
+    if mode == "vector-shortcircuit":
+        # RDataFrame stops evaluating an event as soon as one predicate rejects it, so a
+        # like-for-like comparison has to narrow the arrays between steps rather than
+        # evaluating every step on every event.
+        surviving = np.arange(n_events)
+        for name in steps:
+            column = data[bc.CHAIN_COLUMNS[name]]
+            surviving = surviving[_step_mask(name, column[surviving], rp_id)]
+            counts.append(len(surviving))
+        return {"final": counts[-1], "intermediate": counts, "event_loops": 1}
+
     combined = None
-    for name in bc.CHAIN_STEPS[:chain_len]:
-        mask = _step_mask(name, data, rp_id)
+    for name in steps:
+        mask = _step_mask(name, data[bc.CHAIN_COLUMNS[name]], rp_id)
         combined = mask if combined is None else (combined & mask)
         counts.append(int(np.count_nonzero(combined)))
     return {"final": counts[-1], "intermediate": counts, "event_loops": 1}
