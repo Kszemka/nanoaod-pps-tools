@@ -94,6 +94,19 @@ def warmup(args, build_and_trigger, tree="Events"):
     build_and_trigger(ROOT.RDataFrame(tree, args.input).Range(1))
 
 
+def count_events(args, tree="Events"):
+    """
+    Entry count straight from the TTree header.
+
+    A Count() action would be an entire event loop -- on a 14 M event file that was ~150 s per
+    run, spent purely on bookkeeping and charged to the setup phase.
+    """
+    f = ROOT.TFile.Open(args.input)
+    total = int(f.Get(tree).GetEntries())
+    f.Close()
+    return min(total, args.max_events) if args.max_events else total
+
+
 def make_dataframe(args, tree="Events"):
     df = ROOT.RDataFrame(tree, args.input)
     if args.max_events:
