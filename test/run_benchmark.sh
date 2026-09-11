@@ -392,8 +392,25 @@ cmd_scaling() {
         run_one "scale_eff_uproot_x${copies}" bench_efficiency.py --input "$dataset" --impl uproot
         run_one "scale_chain_rdf_x${copies}" bench_chain.py \
             --input "$dataset" --impl rdf-lazy --chain-len 3
+        # The Python chain is both the slowest thing in the campaign and the whole point of
+        # the memory plot, so it gets a timeout that grows with the dataset.
+        #
+        # A timeout is not a censored point here. For a time measurement "did not finish in
+        # 300 s" is still a lower bound and plot_results.py draws it, but the process dies
+        # before printing its BENCH line, so peak_rss_kb is never recorded at all -- the
+        # largest points, the ones the RSS-vs-size plot exists to show, would simply be
+        # missing. Measured 10130 events/s at 8 copies, i.e. 276 s, which is also why the flat
+        # 300 s is not merely too small for x16 and x32: x8 sits 8% under it.
+        #
+        # Never below RUN_TIMEOUT, so a caller who raised it globally -- as
+        # slurm_benchmark.sbatch does -- keeps the more generous limit. This scaling exists to
+        # stop the default from deleting the large points, not to impose a tighter ceiling on
+        # someone who already thought about it.
+        scaled_timeout=$(( copies * 45 + 120 ))
+        RUN_TIMEOUT_OVERRIDE=$(( scaled_timeout > RUN_TIMEOUT ? scaled_timeout : RUN_TIMEOUT ))
         run_one "scale_chain_python_x${copies}" bench_chain.py \
             --input "$dataset" --impl python --chain-len 3
+        unset RUN_TIMEOUT_OVERRIDE
         # uproot is the implementation the memory plot is really about: it materialises the
         # columns too, but as flat buffers rather than one Python object per event, so it
         # separates "materialising is expensive" from "PyROOT's per-event objects are".
