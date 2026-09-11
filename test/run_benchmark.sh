@@ -34,6 +34,7 @@ MACHINE="${MACHINE:-local}"
 RUN_TIMEOUT="${RUN_TIMEOUT:-300}"
 REPEATS="${REPEATS:-3}"
 THREADS_LIST="${THREADS_LIST:-1 2 4 8 16 32 48}"
+MAX_CHAIN_LEN="${MAX_CHAIN_LEN:-5}"
 SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-0.1}"
 
 export MACHINE
@@ -44,9 +45,23 @@ export MACHINE
 # DS_S is the unmodified source file: the Python paths are single-threaded, so its clustering
 # is irrelevant to them and re-encoding a 1x copy would buy nothing.
 DS_S="${DS_S:-$REPO_ROOT/examples/test.root}"
-DS_L="${DS_L:-$DATA_DIR/ds_l.root}"
+# The thread and chain sweeps run the same work once per thread count and once per chain
+# length, so their dataset has to be one that finishes: ds_m (8 copies) rather than ds_l
+# (40 copies), which on Ares made a single repeat take hours. ds_l still carries the large end
+# of the size series, where the point is precisely that the file is big.
+DS_L="${DS_L:-$DATA_DIR/ds_m.root}"
 DS_L_COARSE="${DS_L_COARSE:-$DATA_DIR/ds_l_coarse.root}"
-SCALE_SERIES="${SCALE_SERIES:-1 2 4 8 16 32 64}"
+SCALE_SERIES="${SCALE_SERIES:-1 2 4 8 16 32}"
+
+# One-dataset mode: every test on the same file, size series skipped. Gives a complete result
+# set quickly, and is meant to be repeated per dataset size into separate RESULTS directories,
+# which is also how the size comparison gets built up without one long job.
+if [[ -n "${BENCH_INPUT:-}" ]]; then
+    DS_S="$BENCH_INPUT"
+    DS_L="$BENCH_INPUT"
+    SCALE_SERIES=""
+    echo "single-dataset mode: $BENCH_INPUT"
+fi
 
 mkdir -p "$RESULTS"
 RAW="$RESULTS/raw.jsonl"
@@ -185,7 +200,9 @@ cmd_full() {
     for repeat in $(seq 1 "$REPEATS"); do
         echo "=== repeat $repeat/$REPEATS ==="
 
-        # TEST 1 + TEST 2 + TEST 3, thread sweep on the compiled path.
+        # Thread sweep: one representative run per test. The chain-length sweep is deliberately
+        # not repeated per thread count -- it measures bytes read and event-loop counts, which
+        # are deterministic and thread-independent, so running it seven times only costs time.
         for threads in $THREADS_LIST; do
             if [[ "$threads" -gt "$max_threads" ]]; then
                 echo "  skipping ${threads} threads: only ~${max_threads} clusters-worth of parallelism"
@@ -193,14 +210,18 @@ cmd_full() {
             fi
             run_one "r${repeat}_filter_rdf_t${threads}" bench_filter.py \
                 --input "$DS_L" --impl rdf --threads "$threads"
-            for len in 1 2 3 4 5; do
-                for impl in rdf-lazy rdf-eager rdf-report; do
-                    run_one "r${repeat}_chain_${impl}_l${len}_t${threads}" bench_chain.py \
-                        --input "$DS_L" --impl "$impl" --chain-len "$len" --threads "$threads"
-                done
-            done
+            run_one "r${repeat}_chain_rdf-lazy_l${MAX_CHAIN_LEN}_t${threads}" bench_chain.py \
+                --input "$DS_L" --impl rdf-lazy --chain-len "$MAX_CHAIN_LEN" --threads "$threads"
             run_one "r${repeat}_eff_jit_t${threads}" bench_efficiency.py \
                 --input "$DS_L" --impl jit --threads "$threads"
+        done
+
+        # Chain-length sweep: single-threaded, where lazy/eager/report differ.
+        for len in $(seq 1 "$MAX_CHAIN_LEN"); do
+            for impl in rdf-lazy rdf-eager rdf-report; do
+                run_one "r${repeat}_chain_${impl}_l${len}" bench_chain.py \
+                    --input "$DS_L" --impl "$impl" --chain-len "$len"
+            done
         done
 
         # Python paths: single-threaded by construction (GIL), and on the small dataset.
@@ -208,7 +229,7 @@ cmd_full() {
             --input "$DS_S" --impl python --mode vector
         run_one "r${repeat}_filter_python_loop" bench_filter.py \
             --input "$DS_S" --impl python --mode loop
-        for len in 1 2 3 4 5; do
+        for len in $(seq 1 "$MAX_CHAIN_LEN"); do
             run_one "r${repeat}_chain_python_l${len}" bench_chain.py \
                 --input "$DS_S" --impl python --chain-len "$len" --mode vector
         done
@@ -242,17 +263,20 @@ cmd_scaling() {
     done
 }
 
-# Control for the thread-scaling plateau. Same size and contents as DS_L, an order of magnitude
-# fewer TTree clusters: RDataFrame hands out work per cluster, so if the curve flattens earlier
-# here, the plateau belongs to the file layout and not to the code.
+# Control for the thread-scaling plateau. Same size and contents, an order of magnitude fewer
+# TTree clusters: RDataFrame hands out work per cluster, so if the curve flattens earlier here,
+# the plateau belongs to the file layout and not to the code. The pair is configurable because
+# generating a coarse twin is expensive -- a smaller matched pair works just as well.
 cmd_clusters() {
-    [[ -f "$DS_L_COARSE" ]] || return 0
+    local fine="${CLUSTER_FINE:-$DS_L}"
+    local coarse="${CLUSTER_COARSE:-$DS_L_COARSE}"
+    [[ -f "$coarse" && -f "$fine" ]] || return 0
     echo "=== cluster-count control ==="
     for threads in $THREADS_LIST; do
         run_one "clusters_fine_t${threads}" bench_efficiency.py \
-            --input "$DS_L" --impl jit --threads "$threads" --tag fine
+            --input "$fine" --impl jit --threads "$threads" --tag fine
         run_one "clusters_coarse_t${threads}" bench_efficiency.py \
-            --input "$DS_L_COARSE" --impl jit --threads "$threads" --tag coarse
+            --input "$coarse" --impl jit --threads "$threads" --tag coarse
     done
 }
 

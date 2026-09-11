@@ -43,7 +43,7 @@ def main():
         bc.setup_root(bc.resolve_threads(args))
         df = bc.make_dataframe(args)
         df = filter_detector_specific_events(df, args.rp_id)
-        n_events = int(df.Count().GetValue())
+        n_events = bc.count_events(args)
         if args.impl == "jit":
             df = impl_rdf.efficiency_rdf_jit(
                 df, args.rp_id, args.arm, correction_json, args.pot_type

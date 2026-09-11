@@ -47,7 +47,11 @@ gen ds_l 40 15000
 # Size series for the memory- and time-vs-size plots. One autoflush for the whole series, so
 # clustering does not vary along the x axis and turn into a hidden second variable -- which is
 # why x1 is regenerated here instead of reusing the ds_s copy above.
-for copies in 1 2 4 8 16 32 64; do
+#
+# Stops at 32: measured 5.4 min per copy on an Ares node, so an x64 point alone would cost
+# ~5.8 h for one more marker on a log-log fit that already spans 1.5 decades.
+SERIES="${SERIES:-1 2 4 8 16 32}"
+for copies in $SERIES; do
     gen "ds_x${copies}" "$copies" 10000
 done
 

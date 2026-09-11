@@ -17,7 +17,7 @@ def main():
             bc.warmup(args, lambda d: impl_rdf.filter_rdf(d, args.rp_id))
         bc.setup_root(bc.resolve_threads(args))
         df = bc.make_dataframe(args)
-        n_events = int(df.Count().GetValue())
+        n_events = bc.count_events(args)
 
     with bench.phase("loop"):
         if args.impl == "rdf":
