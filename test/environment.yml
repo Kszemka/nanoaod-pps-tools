@@ -7,6 +7,16 @@ dependencies:
   - correctionlib
   - numpy
   - matplotlib
+  # The columnar baseline. RDataFrame.AsNumpy() on a jagged branch returns one Python object
+  # per event, so the "NumPy" comparison was measuring PyROOT's materialisation rather than
+  # columnar analysis: measured on examples/test.root, the 5-filter chain took 8.7 s that way
+  # against 0.21 s with awkward, next to 0.12 s for RDataFrame. Without these two the headline
+  # ratio is against a strawman.
+  #
+  # Pinned to the major versions whose API impl_uproot.py uses: awkward 2's `ak.any(axis=1)`
+  # on a jagged array, and uproot 5's `arrays(library="ak")` and `source.num_requested_bytes`.
+  - uproot >=5,<6
+  - awkward >=2,<3
   # examples/test.root is stored in Git LFS; without this a clone yields a 134-byte pointer
   # file and every run fails on an unreadable ROOT file.
   - git-lfs

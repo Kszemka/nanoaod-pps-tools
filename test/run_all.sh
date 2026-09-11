@@ -5,8 +5,9 @@
 #   1. correctness      (validate.py -- nothing below is meaningful if this fails)
 #   2. smoke test       (every path starts and produces a record)
 #   3. datasets         (skipped if they already exist)
-#   4. measurements     (thread sweep, size sweep, cache probe)
-#   5. plots + CSV
+#   4. measurements     (thread sweep, size sweep, layout, cache probe)
+#   5. I/O diagnostics  (why the bytes-read numbers are what they are)
+#   6. plots + CSV
 #
 # Usage:
 #   ./test/run_all.sh                  # everything
@@ -65,6 +66,15 @@ if ! "$PY" -c "import ROOT, correctionlib, numpy" 2>/dev/null; then
     echo "ERROR: '$PY' is missing ROOT, correctionlib or numpy." | tee -a "$LOG" >&2
     exit 1
 fi
+# uproot and awkward carry the columnar baseline. Without them the Python side of the
+# comparison is only the AsNumpy path, whose cost is dominated by PyROOT materialising one
+# object per event -- so the headline RDataFrame-vs-Python ratio would be measuring the wrong
+# thing. Missing is a hard error rather than a skipped implementation.
+if ! "$PY" -c "import uproot, awkward" 2>/dev/null; then
+    echo "ERROR: '$PY' is missing uproot or awkward." | tee -a "$LOG" >&2
+    echo "       micromamba install -c conda-forge uproot awkward" | tee -a "$LOG" >&2
+    exit 1
+fi
 
 SOURCE_ROOT="$REPO_ROOT/examples/test.root"
 if [[ -f "$SOURCE_ROOT" ]] && head -c 40 "$SOURCE_ROOT" | grep -q 'git-lfs'; then
@@ -93,7 +103,19 @@ if step 4 "measurements"; then
     bash "$TEST_DIR/run_benchmark.sh" full 2>&1 | tee -a "$LOG"
 fi
 
-if step 5 "plots"; then
+if step 5 "I/O diagnostics"; then
+    # Runs on whatever datasets exist. TFile::GetFileBytesRead says how much was read but not
+    # why; this sweeps the TTreeCache size, which is what distinguishes a cache too small to
+    # hold a cluster from plain basket granularity.
+    for name in ds_x1 ds_x8 ds_x8_slim ds_x8_coarse ds_l; do
+        dataset="$DATA_DIR/${name}.root"
+        [[ -f "$dataset" ]] || continue
+        "$PY" "$TEST_DIR/diag_io.py" --input "$dataset" \
+            --out "$RESULTS/diag_io.jsonl" 2>&1 | tee -a "$LOG"
+    done
+fi
+
+if step 6 "plots"; then
     "$PY" "$TEST_DIR/plot_results.py" --results "$RESULTS" 2>&1 | tee -a "$LOG"
 fi
 

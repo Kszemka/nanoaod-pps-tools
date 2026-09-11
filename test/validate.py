@@ -167,6 +167,11 @@ def main():
         [
             ("rdf", run_bench("bench_filter.py", *common, "--impl", "rdf")["checksums"]),
             (
+                "rdf/callable",
+                run_bench("bench_filter.py", *common, "--impl", "rdf",
+                          "--filter-style", "callable")["checksums"],
+            ),
+            (
                 "python/vector",
                 run_bench("bench_filter.py", *common, "--impl", "python", "--mode", "vector")["checksums"],
             ),
@@ -174,12 +179,13 @@ def main():
                 "python/loop",
                 run_bench("bench_filter.py", *common, "--impl", "python", "--mode", "loop")["checksums"],
             ),
+            ("uproot", run_bench("bench_filter.py", *common, "--impl", "uproot")["checksums"]),
         ],
     )
 
     for chain_len in range(1, bc.MAX_CHAIN_LEN + 1):
         records = []
-        for impl in ("rdf-eager", "rdf-report", "python", "rdf-lazy"):
+        for impl in ("rdf-eager", "rdf-report", "python", "uproot", "rdf-lazy"):
             record = run_bench(
                 "bench_chain.py", *common, "--impl", impl, "--chain-len", str(chain_len)
             )
@@ -190,6 +196,28 @@ def main():
                 checksums.pop("intermediate", None)
             records.append((f"{impl} [{record['event_loops']} loops]", checksums))
         ok &= compare(f"TEST 2 -- chain-len {chain_len}", records)
+
+    # Short-circuiting changes how much work is done per step, never the outcome, so the
+    # intermediate counts are allowed to differ while the final count must not.
+    shortcircuit = []
+    for impl in ("python", "uproot"):
+        for mode in ("vector", "vector-shortcircuit"):
+            record = run_bench("bench_chain.py", *common, "--impl", impl, "--mode", mode,
+                               "--chain-len", str(bc.MAX_CHAIN_LEN))
+            shortcircuit.append(
+                (f"{impl}/{mode}", {"events_passed": record["checksums"]["events_passed"]})
+            )
+    ok &= compare("TEST 2 -- short-circuiting must not change the answer", shortcircuit)
+
+    # Filter order is the user's choice, and the predicates are an AND, so every order has to
+    # end on the same count. This is what licenses reading the ordering experiment as a pure
+    # cost difference rather than as two different queries.
+    ordering = []
+    for order in sorted(bc.CHAIN_ORDERS):
+        record = run_bench("bench_chain.py", *common, "--impl", "rdf-lazy",
+                           "--chain-len", str(bc.MAX_CHAIN_LEN), "--chain-order", order)
+        ordering.append((f"rdf-lazy/{order}", {"events_passed": record["checksums"]["events_passed"]}))
+    ok &= compare("TEST 2 -- filter order must not change the answer", ordering)
 
     # Geometry first within TEST 3: if the transcription is wrong, the implementations below can
     # still agree with each other perfectly and all be wrong together.
@@ -210,6 +238,10 @@ def main():
             (
                 "python/loop",
                 run_bench("bench_efficiency.py", *common, "--impl", "python", "--mode", "loop")["checksums"],
+            ),
+            (
+                "uproot",
+                run_bench("bench_efficiency.py", *common, "--impl", "uproot")["checksums"],
             ),
         ],
     )
