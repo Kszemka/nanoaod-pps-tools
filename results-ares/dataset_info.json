@@ -1,0 +1,76 @@
+{
+  "ds_s.root": {
+    "path": "/net/afscra/people/plgakrzemin/bench/data/ds_s.root",
+    "tree": "Events",
+    "n_events": 346825,
+    "file_size_bytes": 240600581,
+    "n_clusters": 39,
+    "auto_flush": 0,
+    "n_branches": 1984,
+    "tot_bytes": 1887833092,
+    "zip_bytes": 237284945,
+    "root_version": "6.32.10",
+    "branches": {
+      "PPSLocalTrack_decRPId": {
+        "zip_bytes": 778685,
+        "tot_bytes": 8963838
+      },
+      "PPSLocalTrack_rpType": {
+        "zip_bytes": 480134,
+        "tot_bytes": 8963763
+      },
+      "Proton_singleRP_xi": {
+        "zip_bytes": 3728036,
+        "tot_bytes": 8501001
+      },
+      "PPSLocalTrack_x": {
+        "zip_bytes": 4805499,
+        "tot_bytes": 8963388
+      },
+      "PPSLocalTrack_y": {
+        "zip_bytes": 4495483,
+        "tot_bytes": 8963388
+      }
+    },
+    "compression_factor": 7.955975007179659,
+    "n_tracks": 1892297,
+    "copies": 1
+  },
+  "ds_m.root": {
+    "path": "/net/afscra/people/plgakrzemin/bench/data/ds_m.root",
+    "tree": "Events",
+    "n_events": 2774600,
+    "file_size_bytes": 1941756978,
+    "n_clusters": 279,
+    "auto_flush": 10000,
+    "n_branches": 1984,
+    "tot_bytes": 15151237916,
+    "zip_bytes": 1936029401,
+    "root_version": "6.32.10",
+    "branches": {
+      "PPSLocalTrack_decRPId": {
+        "zip_bytes": 5969433,
+        "tot_bytes": 71680030
+      },
+      "PPSLocalTrack_rpType": {
+        "zip_bytes": 3633806,
+        "tot_bytes": 71679743
+      },
+      "Proton_singleRP_xi": {
+        "zip_bytes": 29240680,
+        "tot_bytes": 67978178
+      },
+      "PPSLocalTrack_x": {
+        "zip_bytes": 38044455,
+        "tot_bytes": 71678308
+      },
+      "PPSLocalTrack_y": {
+        "zip_bytes": 35285963,
+        "tot_bytes": 71678308
+      }
+    },
+    "compression_factor": 7.825933794277125,
+    "n_tracks": 15138376,
+    "copies": 8
+  }
+}
