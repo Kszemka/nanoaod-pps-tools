@@ -1,0 +1,7 @@
+t_s,rss_kb,phase
+0.000,347664,start
+0.111,357588,start
+0.304,406868,warmup
+0.982,446348,warmup
+2.170,487420,warmup
+5.854,508728,after_loop
