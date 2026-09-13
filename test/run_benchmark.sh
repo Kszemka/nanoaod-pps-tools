@@ -484,17 +484,41 @@ cmd_first_read() {
     done
 }
 
+# Thread sweep on its own, so it can be repeated on a larger dataset without rerunning the
+# whole campaign. Worth doing: the speedup curve is only as trustworthy as the single-thread
+# loop is long, and on ds_x8 that loop is ~2 s, which measures thread-pool startup more than
+# it measures scaling.
+cmd_threads() {
+    have_dataset "$DS_MAIN" || return 0
+    local max_threads
+    max_threads="$("$PY" "$TEST_DIR/plot_results.py" --max-threads --for-input "$DS_MAIN" \
+        --results "$RESULTS" 2>/dev/null || echo 999)"
+    echo "=== thread sweep on $(basename "$DS_MAIN") ==="
+    for repeat in $(seq 1 "$REPEATS"); do
+        for threads in $THREADS_LIST; do
+            [[ "$threads" -gt "$max_threads" ]] && continue
+            run_one "r${repeat}_filter_rdf_t${threads}" bench_filter.py \
+                --input "$DS_MAIN" --impl rdf --threads "$threads"
+            run_one "r${repeat}_chain_rdf-lazy_l${MAX_CHAIN_LEN}_t${threads}" bench_chain.py \
+                --input "$DS_MAIN" --impl rdf-lazy --chain-len "$MAX_CHAIN_LEN" --threads "$threads"
+            run_one "r${repeat}_eff_jit_t${threads}" bench_efficiency.py \
+                --input "$DS_MAIN" --impl jit --threads "$threads"
+        done
+    done
+}
+
 case "${1:-full}" in
     quick) cmd_quick ;;
     validate) cmd_validate ;;
     scaling) cmd_scaling ;;
+    threads) cmd_threads ;;
     clusters) cmd_clusters ;;
     layout) cmd_layout ;;
     rntuple) cmd_rntuple ;;
     cache) cmd_first_read ;;
     full) cmd_full ;;
     *)
-        echo "Usage: $0 {quick|validate|scaling|clusters|layout|rntuple|cache|full}" >&2
+        echo "Usage: $0 {quick|validate|scaling|threads|clusters|layout|rntuple|cache|full}" >&2
         exit 1
         ;;
 esac
@@ -506,3 +530,4 @@ if [[ -n "${DRY_RUN:-}" ]]; then
 else
     echo "Records in $RAW"
 fi
+
