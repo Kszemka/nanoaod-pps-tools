@@ -21,13 +21,11 @@ def main():
     args = parser.parse_args()
 
     bench = bc.Bench(args, "efficiency")
-    bench.note_columns(["PPSLocalTrack_x", "PPSLocalTrack_y", "PPSLocalTrack_decRPId"])
 
     with bench.phase("setup"):
         from app.analyze_proton_events import filter_detector_specific_events
 
         correction_json = bc.build_efficiency_json(args.arm, args.pot_type)
-        bc.apply_tree_cache(args)
 
     if args.impl == "jit":
         import impl_rdf
@@ -48,7 +46,7 @@ def main():
     # Second half of setup: EnableImplicitMT has to come after the warmup, because Range() --
     # which is how the warmup limits itself to one entry -- is unsupported under implicit MT.
     with bench.phase("setup"):
-        bc.setup_root(bc.resolve_threads(args))
+        bc.setup_root(args.threads)
         n_events = bc.count_events(args)
         if args.impl != "uproot":
             df = filter_detector_specific_events(bc.make_dataframe(args), args.rp_id)

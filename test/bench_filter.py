@@ -9,26 +9,24 @@ def main():
     args = parser.parse_args()
 
     bench = bc.Bench(args, "filter")
-    bench.note_columns([bc.CHAIN_COLUMNS["double_arm"]])
 
     if args.impl == "rdf":
         import impl_rdf
 
         with bench.phase("warmup"):
             bc.warmup(args, lambda d: impl_rdf.trigger_filter(
-                impl_rdf.build_filter(d, args.rp_id, args.filter_style)
+                impl_rdf.build_filter(d, args.rp_id)
             ))
 
     with bench.phase("setup"):
-        bc.apply_tree_cache(args)
-        bc.setup_root(bc.resolve_threads(args))
+        bc.setup_root(args.threads)
         n_events = bc.count_events(args)
         if args.impl != "uproot":
             df = bc.make_dataframe(args)
 
     if args.impl == "rdf":
         with bench.phase("jit"):
-            handle = impl_rdf.build_filter(df, args.rp_id, args.filter_style)
+            handle = impl_rdf.build_filter(df, args.rp_id)
         with bench.phase("loop"):
             passed = impl_rdf.trigger_filter(handle)
     elif args.impl == "uproot":

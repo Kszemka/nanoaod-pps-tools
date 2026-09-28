@@ -26,8 +26,9 @@
 # 48-thread points would be two threads sharing a core, and the flattening they show would be
 # a property of the allocation rather than of the code.
 #
-# 8 h for a ~2.1 h campaign (165 runs). The margin is wide because with --exclusive a job that
-# runs out of wall clock has to queue for a whole node again.
+# 3 h for a ~1.2 h campaign (165 runs plus validate.py; `DRY_RUN=1 test/run_benchmark.sh`
+# lists them). The margin covers a slow Lustre day; a shorter request queues sooner for a whole
+# node, and a job that runs out of wall clock has to queue again.
 
 set -euo pipefail
 
@@ -36,8 +37,14 @@ export SCRATCH_BENCH="${SCRATCH}/bench"
 # Without this micromamba looks for environments under $HOME instead of the one on scratch.
 export MAMBA_ROOT_PREFIX="${SCRATCH_BENCH}/micromamba"
 
+# `set -u` off across the activation only. The job inherits the submitting shell's environment,
+# so activate first deactivates whatever was already loaded, and the env's own
+# deactivate-root.sh reads CONDA_BACKUP_ROOTSYS unconditionally -- unset on a fresh job, which
+# under -u kills the script before the first benchmark.
+set +u
 eval "$("${SCRATCH_BENCH}/micromamba/bin/micromamba" shell hook -s bash)"
 micromamba activate pps-bench
+set -u
 
 cd "${SCRATCH_BENCH}/nanoaod-pps-tools"
 
@@ -65,28 +72,21 @@ export PY="$(command -v python)"
 export DATA_DIR="${SCRATCH_BENCH}/data"
 export RESULTS="${SCRATCH_BENCH}/results-ares"
 export THREADS_LIST="1 2 4 8 12 16 24 32 48"
-export DS_CORE="${DATA_DIR}/ds_x32.root"
-# Repeats are set per experiment in run_benchmark.sh; REPEATS only still covers the legacy
-# `full` campaign, which this job no longer runs.
-export RUN_TIMEOUT_CORE=2400
+export RUN_TIMEOUT=2400
 
 # run_benchmark.sh appends to $RESULTS/raw.jsonl, so a directory left over from an earlier
-# campaign quietly mixes its records in. plot_results.py separates them by schema_version, but
-# only records of the current version have the phase split and the net RSS baseline, so the
-# honest thing is to start a new directory and keep the old one as evidence.
+# campaign would quietly mix its records in. Start a new directory and keep the old one.
 if [[ -f "${RESULTS}/raw.jsonl" ]]; then
     previous="${RESULTS}-archived-$(date +%Y%m%d_%H%M%S)"
     echo "moving previous results to ${previous}"
     mv "${RESULTS}" "${previous}"
 fi
 
-# Datasets are built by their own job (see README): with LZMA they can outlast this one.
-#
 # No srun. Since Slurm 22.05 a job step does not inherit --cpus-per-task from the batch
 # allocation, so `srun` here could hand the whole campaign a single CPU -- which fails
 # silently, as a flat speedup curve. The batch script already runs inside a cgroup covering
 # the full allocation, and this is one process on one node, so the step bought nothing.
-bash test/run_all.sh --skip-datasets
+bash test/run_all.sh
 
 # Independent confirmation of the numbers the script collected itself. `seff` is not installed
 # on Ares, so read the accounting database directly.

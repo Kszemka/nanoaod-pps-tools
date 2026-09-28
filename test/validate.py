@@ -146,7 +146,6 @@ def compare(name, records):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--input", default=os.path.join(REPO_ROOT, "examples", "test.root"))
-    parser.add_argument("--max-events", type=int, default=0)
     parser.add_argument("--grid-points", type=int, default=100000)
     parser.add_argument(
         "--threads",
@@ -157,20 +156,11 @@ def main():
     args = parser.parse_args()
 
     common = ["--input", args.input]
-    if args.max_events:
-        # Range() and ImplicitMT are mutually exclusive, so the threaded check needs the
-        # whole file.
-        common += ["--max-events", str(args.max_events)]
 
     ok = compare(
         "TEST 1 -- single filter",
         [
             ("rdf", run_bench("bench_filter.py", *common, "--impl", "rdf")["checksums"]),
-            (
-                "rdf/callable",
-                run_bench("bench_filter.py", *common, "--impl", "rdf",
-                          "--filter-style", "callable")["checksums"],
-            ),
             (
                 "python/vector",
                 run_bench("bench_filter.py", *common, "--impl", "python", "--mode", "vector")["checksums"],
@@ -196,28 +186,6 @@ def main():
                 checksums.pop("intermediate", None)
             records.append((f"{impl} [{record['event_loops']} loops]", checksums))
         ok &= compare(f"TEST 2 -- chain-len {chain_len}", records)
-
-    # Short-circuiting changes how much work is done per step, never the outcome, so the
-    # intermediate counts are allowed to differ while the final count must not.
-    shortcircuit = []
-    for impl in ("python", "uproot"):
-        for mode in ("vector", "vector-shortcircuit"):
-            record = run_bench("bench_chain.py", *common, "--impl", impl, "--mode", mode,
-                               "--chain-len", str(bc.MAX_CHAIN_LEN))
-            shortcircuit.append(
-                (f"{impl}/{mode}", {"events_passed": record["checksums"]["events_passed"]})
-            )
-    ok &= compare("TEST 2 -- short-circuiting must not change the answer", shortcircuit)
-
-    # Filter order is the user's choice, and the predicates are an AND, so every order has to
-    # end on the same count. This is what licenses reading the ordering experiment as a pure
-    # cost difference rather than as two different queries.
-    ordering = []
-    for order in sorted(bc.CHAIN_ORDERS):
-        record = run_bench("bench_chain.py", *common, "--impl", "rdf-lazy",
-                           "--chain-len", str(bc.MAX_CHAIN_LEN), "--chain-order", order)
-        ordering.append((f"rdf-lazy/{order}", {"events_passed": record["checksums"]["events_passed"]}))
-    ok &= compare("TEST 2 -- filter order must not change the answer", ordering)
 
     # Geometry first within TEST 3: if the transcription is wrong, the implementations below can
     # still agree with each other perfectly and all be wrong together.
@@ -247,27 +215,24 @@ def main():
     )
 
     if args.threads > 1:
-        if args.max_events:
-            print("\n== thread safety: skipped (--max-events forces a single thread) ==")
-        else:
-            # The JIT kernel is stateless by construction; this is what proves it stayed that
-            # way. A race here would show up as a small, run-dependent drift in eff_sum.
-            ok &= compare(
-                f"TEST 3 -- thread safety (1 vs {args.threads} threads)",
-                [
-                    (
-                        "jit / 1 thread",
-                        run_bench("bench_efficiency.py", *common, "--impl", "jit")["checksums"],
-                    ),
-                    (
-                        f"jit / {args.threads} threads",
-                        run_bench(
-                            "bench_efficiency.py", *common, "--impl", "jit",
-                            "--threads", str(args.threads),
-                        )["checksums"],
-                    ),
-                ],
-            )
+        # The JIT kernel is stateless by construction; this is what proves it stayed that way.
+        # A race here would show up as a small, run-dependent drift in eff_sum.
+        ok &= compare(
+            f"TEST 3 -- thread safety (1 vs {args.threads} threads)",
+            [
+                (
+                    "jit / 1 thread",
+                    run_bench("bench_efficiency.py", *common, "--impl", "jit")["checksums"],
+                ),
+                (
+                    f"jit / {args.threads} threads",
+                    run_bench(
+                        "bench_efficiency.py", *common, "--impl", "jit",
+                        "--threads", str(args.threads),
+                    )["checksums"],
+                ),
+            ],
+        )
 
     print("\nRESULT:", "all checks passed" if ok else "FAILURES -- do not trust the timings")
     return 0 if ok else 1

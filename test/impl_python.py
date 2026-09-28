@@ -14,10 +14,10 @@ What this file therefore measures is the cost of getting ROOT data into Python t
 For genuinely columnar Python -- a flat values buffer with offsets, operated on in compiled
 code -- see impl_uproot.py, which is the fair comparison for RDataFrame.
 
-Three modes throughout:
-  vector              - NumPy over the materialised columns, every step on every event
-  vector-shortcircuit - the same, but narrowing to survivors between steps, as RDataFrame does
-  loop                - plain Python for-loops (the naive version)
+TEST 1 and TEST 3 come in two modes:
+  vector - NumPy over the materialised columns
+  loop   - plain Python for-loops (the naive version)
+The TEST 2 chain is vectorised and narrows to survivors between steps, as RDataFrame does.
 
 All of them materialise every column they touch in full before doing any work; that is the
 structural difference from the RDataFrame path, and it is what the memory plots measure.
@@ -89,57 +89,24 @@ def _step_mask(name, column, rp_id):
     )
 
 
-def _step_passes(name, event, rp_id):
-    """Same predicate as _step_mask, for a single event, without NumPy."""
-    if name == "pps":
-        return int(event) > 0
-    if name == "double_arm":
-        left = any(int(v) in bc.ARM_LEFT_RPS for v in event)
-        right = any(int(v) in bc.ARM_RIGHT_RPS for v in event)
-        return left and right
-    if name == "diamond":
-        return any(int(v) == bc.DIAMOND_RP_TYPE for v in event)
-    if name == "rp_id":
-        return any(int(v) == rp_id for v in event)
-    lo, hi = bc.XI_RANGE
-    return any(lo <= float(v) <= hi for v in event)
-
-
-def chain_python(df, chain_len, mode, rp_id=bc.DEFAULT_RP_ID, order="notebook"):
+def chain_python(df, chain_len, rp_id=bc.DEFAULT_RP_ID):
     # Every column the chain needs is pulled up front -- unlike RDataFrame, there is no way to
     # read the later columns only for the events that survived the earlier filters. All of the
     # filtering happens here too, including the nPPSLocalTrack > 0 step: leaving it to
     # RDataFrame would mean measuring RDataFrame doing part of Python's work.
-    columns = bc.chain_columns(chain_len, order)
-    steps = bc.chain_steps(chain_len, order)
+    columns = bc.chain_columns(chain_len)
     data = df.AsNumpy(columns)
     n_events = len(data[columns[0]])
     counts = [n_events]
 
-    if mode == "loop":
-        surviving = list(range(n_events))
-        for name in steps:
-            column = data[bc.CHAIN_COLUMNS[name]]
-            surviving = [i for i in surviving if _step_passes(name, column[i], rp_id)]
-            counts.append(len(surviving))
-        return {"final": counts[-1], "intermediate": counts, "event_loops": 1}
-
-    if mode == "vector-shortcircuit":
-        # RDataFrame stops evaluating an event as soon as one predicate rejects it, so a
-        # like-for-like comparison has to narrow the arrays between steps rather than
-        # evaluating every step on every event.
-        surviving = np.arange(n_events)
-        for name in steps:
-            column = data[bc.CHAIN_COLUMNS[name]]
-            surviving = surviving[_step_mask(name, column[surviving], rp_id)]
-            counts.append(len(surviving))
-        return {"final": counts[-1], "intermediate": counts, "event_loops": 1}
-
-    combined = None
-    for name in steps:
-        mask = _step_mask(name, data[bc.CHAIN_COLUMNS[name]], rp_id)
-        combined = mask if combined is None else (combined & mask)
-        counts.append(int(np.count_nonzero(combined)))
+    # RDataFrame stops evaluating an event as soon as one predicate rejects it, so a
+    # like-for-like comparison narrows the arrays between steps rather than evaluating every
+    # step on every event.
+    surviving = np.arange(n_events)
+    for name in bc.chain_steps(chain_len):
+        column = data[bc.CHAIN_COLUMNS[name]]
+        surviving = surviving[_step_mask(name, column[surviving], rp_id)]
+        counts.append(len(surviving))
     return {"final": counts[-1], "intermediate": counts, "event_loops": 1}
 
 

@@ -378,8 +378,8 @@ df_rp103 = filter_detector_specific_events(df, rp_id=103)
 
 ## Performance Notes
 
-Measured on an exclusive node of the Ares cluster (AMD EPYC 7742, ROOT 6.32.10); full numbers
-in `test/RESULTS.md`.
+Measured on an exclusive node of the Ares cluster (AMD EPYC 7742, ROOT 6.32.10) with the
+benchmark suite in `test/`.
 
 - **Lazy evaluation** means `Filter()` and `Define()` build a graph and nothing runs until a
   result is requested. One pass over the data answers the whole query.
@@ -449,7 +449,7 @@ df = apply_diamond_efficiency_jit(
 The payload is evaluated **once per region** at setup and the resulting values are baked into a
 `constexpr std::array` inside a JIT-compiled C++ kernel, so the event loop never calls back into
 Python. This is what makes the step roughly seven times faster than evaluating `correctionlib`
-per track (see `test/RESULTS.md`, section 4).
+per track (T5 in `test/README.md`).
 
 Declared kernels are cached on the `ROOT` module, so re-importing or reloading the module does
 not trigger cling redefinition errors in a long-lived notebook session.
@@ -545,9 +545,10 @@ nanoaod-pps-tools/
 │   ├── efficiency.json              # Diamond efficiency payload
 │   └── diamond_alignment_coords_2025.json
 ├── test/                         # Benchmark suite
-│   ├── TESTING.md                   # Methodology
-│   ├── RESULTS.md                   # Measured results
+│   ├── README.md                    # What is measured and how to run it
+│   ├── run_all.sh                   # Validation + campaign
 │   ├── run_benchmark.sh             # Campaign driver
+│   ├── slurm_benchmark.sbatch       # Ares job
 │   ├── bench_*.py                   # Individual benchmarks
 │   ├── impl_*.py                    # RDataFrame, uproot and numpy implementations
 │   ├── validate.py                  # Cross-checks the implementations agree
@@ -572,18 +573,18 @@ nanoaod-pps-tools/
 ## Benchmarks
 
 The `test/` directory holds a benchmark suite comparing RDataFrame against `uproot`/`awkward`
-and a pure Python/numpy baseline, on datasets from 0.35 to 11 million events.
+and a pure Python/numpy baseline, on the `ds_x1`–`ds_x32` series (0.35 to 11 million events):
+strong and weak thread scaling, query structure, and implementation comparison.
 
 ```bash
-./test/run_benchmark.sh quick      # smoke test on examples/test.root
-./test/run_benchmark.sh validate   # cross-check that implementations agree
-./test/run_benchmark.sh full       # full campaign (cluster)
+python test/validate.py              # cross-check that implementations agree
+./test/run_all.sh                    # validation + full campaign
+sbatch test/slurm_benchmark.sbatch   # the same on an exclusive Ares node
 ```
 
 Headline results: memory stays under 1 GB regardless of dataset size, against 11 GB for the
 numpy path; throughput is roughly 106x higher; and query formulation alone accounts for a 3.4x
-difference at identical output. See `test/RESULTS.md` for the measurements and
-`test/TESTING.md` for the methodology.
+difference at identical output. See `test/README.md` for the campaign and how to run it.
 
 ---
 

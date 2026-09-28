@@ -83,28 +83,16 @@ def _step_mask(name, data, rp_id):
     return ak.to_numpy(ak.any((column >= lo) & (column <= hi), axis=1))
 
 
-def chain_uproot(path, chain_len, mode, rp_id=bc.DEFAULT_RP_ID, order="notebook"):
-    steps = bc.chain_steps(chain_len, order)
-    data = _read(path, bc.chain_columns(chain_len, order))
+def chain_uproot(path, chain_len, rp_id=bc.DEFAULT_RP_ID):
+    data = _read(path, bc.chain_columns(chain_len))
     n_events = len(data)
     counts = [n_events]
 
-    if mode == "vector-shortcircuit":
-        # What RDataFrame does: later steps only ever look at events that got past the earlier
-        # ones. Plain `vector` mode below evaluates every step on every event, which is a
-        # different amount of work and makes the time-vs-chain-length curves incomparable.
-        surviving = np.arange(n_events)
-        for name in steps:
-            mask = _step_mask(name, data[surviving], rp_id)
-            surviving = surviving[mask]
-            counts.append(len(surviving))
-        return {"final": counts[-1], "intermediate": counts, "event_loops": 1}
-
-    combined = None
-    for name in steps:
-        mask = _step_mask(name, data, rp_id)
-        combined = mask if combined is None else (combined & mask)
-        counts.append(int(np.count_nonzero(combined)))
+    # What RDataFrame does: later steps only ever look at events that got past the earlier ones.
+    surviving = np.arange(n_events)
+    for name in bc.chain_steps(chain_len):
+        surviving = surviving[_step_mask(name, data[surviving], rp_id)]
+        counts.append(len(surviving))
     return {"final": counts[-1], "intermediate": counts, "event_loops": 1}
 
 
