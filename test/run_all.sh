@@ -5,7 +5,7 @@
 #   1. correctness      (validate.py -- nothing below is meaningful if this fails)
 #   2. smoke test       (every path starts and produces a record)
 #   3. datasets         (skipped if they already exist)
-#   4. measurements     (thread sweep, size sweep, layout, cache probe)
+#   4. measurements     (strong scaling, weak scaling, query structure, implementations)
 #   5. I/O diagnostics  (why the bytes-read numbers are what they are)
 #   6. plots + CSV
 #
@@ -107,14 +107,14 @@ if step 3 "datasets"; then
 fi
 
 if step 4 "measurements"; then
-    bash "$TEST_DIR/run_benchmark.sh" full 2>&1 | tee -a "$LOG"
+    bash "$TEST_DIR/run_benchmark.sh" core 2>&1 | tee -a "$LOG"
 fi
 
 if step 5 "I/O diagnostics"; then
     # Runs on whatever datasets exist. TFile::GetFileBytesRead says how much was read but not
     # why; this sweeps the TTreeCache size, which is what distinguishes a cache too small to
     # hold a cluster from plain basket granularity.
-    for name in ds_x1 ds_x8 ds_x8_slim ds_x8_coarse ds_l; do
+    for name in ds_x1 ds_x8 ds_x32; do
         dataset="$DATA_DIR/${name}.root"
         [[ -f "$dataset" ]] || continue
         "$PY" "$TEST_DIR/diag_io.py" --input "$dataset" \

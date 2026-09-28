@@ -12,9 +12,13 @@ This toolkit provides efficient analysis of PPS detector data from CMS Run 3, in
 
 ## Requirements
 
-- ROOT 6.34+ with PyROOT support
+- ROOT 6.32+ with PyROOT support
 - Python 3.11+ (compatible with ROOT installation)
+- `correctionlib` (schema v2)
 - NanoAOD ROOT files with PPS data
+
+The benchmark suite in `test/` additionally needs `uproot`, `awkward` and `matplotlib`; see
+`test/environment.yml`.
 
 ## Installation
 
@@ -28,7 +32,10 @@ source /path/to/root/bin/thisroot.sh
 
 ## Scripts
 
-### 1. `analyze_root.py` - Data Inspection Tool
+All analysis code lives in `app/`. Run the scripts from that directory, or with `app/` on
+`PYTHONPATH`.
+
+### 1. `app/analyze_root.py` - Data Inspection Tool
 
 Analyzes ROOT NanoAOD files to discover and display PPS variables.
 
@@ -40,12 +47,12 @@ Analyzes ROOT NanoAOD files to discover and display PPS variables.
 
 **Usage:**
 ```bash
-python3 analyze_root.py <input_file.root>
+python3 app/analyze_root.py <input_file.root>
 ```
 
 **Example:**
 ```bash
-python3 analyze_root.py ../test.root
+python3 app/analyze_root.py examples/test.root
 ```
 
 **Output:**
@@ -60,7 +67,7 @@ python3 analyze_root.py ../test.root
 
 ---
 
-### 2. `analyze_proton_events.py` - RDataFrame Analysis Engine
+### 2. `app/analyze_proton_events.py` - RDataFrame Analysis Engine
 
 High-performance analysis tool using ROOT RDataFrame for filtering events and generating histograms.
 
@@ -69,21 +76,21 @@ High-performance analysis tool using ROOT RDataFrame for filtering events and ge
 - **Event filters**: single arm, double arm, detector-specific (RP 3, 23, 103, 123)
 - **Flexible histogram generation** for any PPS variable
 - **Automatic 2D histograms** when both X and Y are selected
-- **Organized output** - all results saved to `../data/` directory
+- **Organized output** - all results saved to `data/`
 
 **Usage:**
 ```bash
-python3 analyze_proton_events.py <input_file.root>
+python3 app/analyze_proton_events.py <input_file.root>
 ```
 
 **Example:**
 ```bash
-python3 analyze_proton_events.py ../test.root
+python3 app/analyze_proton_events.py examples/test.root
 ```
 
 **Output Structure:**
 ```
-../data/
+data/
 ├── pps_single_arm.root          # ROOT file with histograms
 ├── pps_single_arm_track_x.png   # X position histogram
 ├── pps_single_arm_track_y.png   # Y position histogram
@@ -97,7 +104,7 @@ python3 analyze_proton_events.py ../test.root
 ### Event Selection Functions
 
 ```python
-from analyze_proton_events import *
+from analyze_proton_events import *   # run from app/, or add it to PYTHONPATH
 
 # Single arm events (only left OR right, not both)
 filter_single_arm_events(df)
@@ -371,15 +378,23 @@ df_rp103 = filter_detector_specific_events(df, rp_id=103)
 
 ## Performance Notes
 
-- **RDataFrame** enables lazy evaluation and multi-threading
-- Processing ~350k events with PPS data: **< 1 minute**
-- Histogram generation: **parallel execution** for multiple histograms
-- Output files automatically saved to `../data/` directory
+Measured on an exclusive node of the Ares cluster (AMD EPYC 7742, ROOT 6.32.10); full numbers
+in `test/RESULTS.md`.
 
+- **Lazy evaluation** means `Filter()` and `Define()` build a graph and nothing runs until a
+  result is requested. One pass over the data answers the whole query.
+- **Avoid `Count()` after every filter.** Each call materialises the graph and forces another
+  pass: five filters cost six passes and 3.4x the time. `Report()` gives the same per-filter
+  statistics in a single pass.
+- **Memory is independent of dataset size.** 498 MB at 347k events, 747 MB at 11.1 million.
+- **Only named branches are read.** A five-filter query touches 2.4% of a 2.71 GB file.
+- **Multi-threading via `ROOT.EnableImplicitMT(n)`** helps up to 8-16 threads and degrades
+  beyond that: each worker gets its own `TTreeCache`, costing about 240 MB per thread.
+- Processing ~350k events with PPS data: **under a second** for a filter chain.
 
 ---
 
-## 3. `apply_corrections.py` - Calibration & Correction Tool
+## 3. `app/apply_corrections.py` - Calibration & Correction Tool
 
 Apply detector calibration corrections to PPS data using correctionlib JSON files.
 
@@ -392,19 +407,19 @@ Apply detector calibration corrections to PPS data using correctionlib JSON file
 **Usage:**
 ```bash
 # Single correction file
-python3 apply_corrections.py <root_file> <correction_json>
+python3 app/apply_corrections.py <root_file> <correction_json>
 
 # Test all examples
-python3 apply_corrections.py <root_file>
+python3 app/apply_corrections.py <root_file>
 ```
 
 **Examples:**
 ```bash
 # Specific correction
-python3 apply_corrections.py examples/test.root corrections-examples/x_track_range_correction.json
+python3 app/apply_corrections.py examples/test.root corrections-examples/x_track_range_correction.json
 
 # All 4 examples automatically
-python3 apply_corrections.py examples/test.root
+python3 app/apply_corrections.py examples/test.root
 ```
 
 **Output:**
@@ -413,6 +428,47 @@ data/
 ├── pps_original_*.png     # Original data
 └── pps_corrected_*.png    # Corrected data
 ```
+
+### Diamond detector efficiency
+
+`apply_diamond_efficiency_jit()` assigns a per-track efficiency from a `correctionlib` payload
+keyed by detector region:
+
+```python
+from apply_corrections import apply_diamond_efficiency_jit
+
+df = apply_diamond_efficiency_jit(
+    df,
+    rp_id=22,              # diamond RP: 16, 22, 116, 122
+    arm_key="45",          # "45" or "56"
+    correction_json="efficiency.json",
+    pot_type="box",        # "box" (3 regions) or "cyl" (4 regions)
+)
+```
+
+The payload is evaluated **once per region** at setup and the resulting values are baked into a
+`constexpr std::array` inside a JIT-compiled C++ kernel, so the event loop never calls back into
+Python. This is what makes the step roughly seven times faster than evaluating `correctionlib`
+per track (see `test/RESULTS.md`, section 4).
+
+Declared kernels are cached on the `ROOT` module, so re-importing or reloading the module does
+not trigger cling redefinition errors in a long-lived notebook session.
+
+### `app/diamond_geometry.py` - Detector geometry
+
+Single source of truth for diamond pot geometry: crystal size, pot centres and rotation angles,
+taken from `diamond_alignment_coords_2025.json`.
+
+```python
+import diamond_geometry as geo
+
+geo.assign_region(x, y, arm_key="45", pot_type="box")   # -> region index, or -1 outside
+geo.build_region_polygons("45")                          # -> polygons for overlay plots
+geo.get_cpp_source("45", pot_type="box")                 # -> C++ source for gInterpreter.Declare
+```
+
+`get_cpp_source()` generates the C++ equivalent of `assign_region()` so that the Python and the
+compiled paths cannot drift apart; `test/validate.py` cross-checks them on 100k random points.
 
 ### Correction File Format
 
@@ -472,28 +528,62 @@ Four correction examples in `corrections-examples/`:
      "output_column": "PPSLocalTrack_y_corrected"
    }
    ```
-3. Test: `python3 apply_corrections.py examples/test.root your_correction.json`
+3. Test: `python3 app/apply_corrections.py examples/test.root your_correction.json`
 ---
 
 ## File Structure
 
 ```
 nanoaod-pps-tools/
-├── analyze_root.py              # Data inspection tool
-├── analyze_proton_events.py     # RDataFrame analysis engine
-├── apply_corrections.py         # Correction application tool
-├── README.md                    # This file
+├── README.md                     # This file
+├── app/                          # Analysis code
+│   ├── analyze_root.py              # Data inspection tool
+│   ├── analyze_proton_events.py     # RDataFrame analysis engine
+│   ├── apply_corrections.py         # Correction application tool
+│   ├── diamond_geometry.py          # Detector geometry, Python and C++
+│   ├── pps_analysis.ipynb           # Interactive walkthrough
+│   ├── efficiency.json              # Diamond efficiency payload
+│   └── diamond_alignment_coords_2025.json
+├── test/                         # Benchmark suite
+│   ├── TESTING.md                   # Methodology
+│   ├── RESULTS.md                   # Measured results
+│   ├── run_benchmark.sh             # Campaign driver
+│   ├── bench_*.py                   # Individual benchmarks
+│   ├── impl_*.py                    # RDataFrame, uproot and numpy implementations
+│   ├── validate.py                  # Cross-checks the implementations agree
+│   └── plot_results.py              # Figures and summary CSV
 ├── examples/
-│   └── test.root               # Example NanoAOD file
+│   └── test.root                    # Example NanoAOD file (Git LFS)
 ├── corrections-examples/
 │   ├── x_track_range_correction.json
 │   ├── per_track_direct_values.json
 │   ├── per_track_binned_array.json
 │   └── per_event_per_track.json
-└── data/                        # Output directory (auto-created)
-    ├── *.root                  # ROOT histogram files
-    └── *.png                   # PNG plots
+└── data/                         # Output directory (auto-created)
+    ├── *.root                       # ROOT histogram files
+    └── *.png                        # PNG plots
 ```
+
+**Note:** `examples/test.root` is tracked with Git LFS. A plain `git clone` without
+`git lfs install` leaves a 134-byte pointer file in its place.
+
+---
+
+## Benchmarks
+
+The `test/` directory holds a benchmark suite comparing RDataFrame against `uproot`/`awkward`
+and a pure Python/numpy baseline, on datasets from 0.35 to 11 million events.
+
+```bash
+./test/run_benchmark.sh quick      # smoke test on examples/test.root
+./test/run_benchmark.sh validate   # cross-check that implementations agree
+./test/run_benchmark.sh full       # full campaign (cluster)
+```
+
+Headline results: memory stays under 1 GB regardless of dataset size, against 11 GB for the
+numpy path; throughput is roughly 106x higher; and query formulation alone accounts for a 3.4x
+difference at identical output. See `test/RESULTS.md` for the measurements and
+`test/TESTING.md` for the methodology.
 
 ---
 

@@ -33,7 +33,9 @@ DATA_DIR="${DATA_DIR:-$TEST_DIR/data}"
 MACHINE="${MACHINE:-local}"
 RUN_TIMEOUT="${RUN_TIMEOUT:-300}"
 REPEATS="${REPEATS:-3}"
-THREADS_LIST="${THREADS_LIST:-1 2 4 8 16 32 48}"
+# 12 and 24 are not decoration: fit_usl needs points either side of the maximum, and with only
+# powers of two the whole 16-48 region -- where the curve turns over -- is three points.
+THREADS_LIST="${THREADS_LIST:-1 2 4 8 12 16 24 32 48}"
 MAX_CHAIN_LEN="${MAX_CHAIN_LEN:-5}"
 SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-0.1}"
 
@@ -71,6 +73,36 @@ DS_MAIN="${DS_MAIN:-${DS_L:-$DATA_DIR/ds_x8.root}}"
 # The pair has to match in size or the experiment cannot tell clustering apart from volume.
 DS_COARSE="${DS_COARSE:-$DATA_DIR/ds_x8_coarse.root}"
 SCALE_SERIES="${SCALE_SERIES:-1 2 4 8 16 32}"
+
+# --- core campaign (cmd_core) ----------------------------------------------------------------
+#
+# One dataset for everything, so no comparison in the whole campaign straddles two files.
+# ds_x32 rather than ds_x8 because a speedup curve is only as trustworthy as its single-thread
+# loop is long: on ds_x8 that loop is 4-11 s against 1.4-1.8 s of fixed cost, which biases the
+# 32- and 48-thread points downwards. ds_x32 puts it at ~44 s, and its 1111 clusters allow
+# 277 threads-worth of parallelism, so 48 is nowhere near the clustering limit.
+DS_CORE="${DS_CORE:-$DATA_DIR/ds_x32.root}"
+# 1, 3, 5 rather than 1..5. The curve is a line through three points either way; the missing
+# two cost 12 runs and rdf-eager at length 5 alone is six event loops.
+CHAIN_LENS="${CHAIN_LENS:-1 3 5}"
+# Weak scaling pairs N threads with ds_xN. The point of the pairing is that work per thread is
+# constant, and it is constant in the unit that matters: clusters, not events. Measured
+# clusters-per-thread across the series is 36.0, 35.5, 35.0, 34.9, 34.75, 34.7 -- flat to 1%.
+#
+# Deliberately not 1 2 4 8 12 16 24 32 to match THREADS_LIST: that would need ds_x12 and
+# ds_x24, ~3.3 h of generation for two points on a curve that is already six points long.
+WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32}"
+# Repeats per experiment rather than one REPEATS for all of them. Repeats exist to give the
+# median something to reject, which is worth 19 minutes on a thread sweep and is not worth it
+# on a Python run that takes 19 minutes by itself and varies by 2%.
+REPEATS_STRONG="${REPEATS_STRONG:-3}"
+REPEATS_WEAK="${REPEATS_WEAK:-3}"
+REPEATS_QSTRUCT="${REPEATS_QSTRUCT:-2}"
+REPEATS_IMPL="${REPEATS_IMPL:-1}"
+# The default 300 s is a ds_x8 number. On ds_x32 the Python chain needs ~1160 s and rdf-eager
+# at length 5 runs six event loops. A timeout here does not slow anything down -- it only
+# decides whether a slow run is recorded or thrown away.
+RUN_TIMEOUT_CORE="${RUN_TIMEOUT_CORE:-2400}"
 
 # One-dataset mode: every test on the same file, size series skipped. Gives a complete result
 # set quickly, and is meant to be repeated per dataset size into separate RESULTS directories,
@@ -391,7 +423,7 @@ cmd_scaling() {
         run_one "scale_eff_python_x${copies}" bench_efficiency.py --input "$dataset" --impl python
         run_one "scale_eff_uproot_x${copies}" bench_efficiency.py --input "$dataset" --impl uproot
         run_one "scale_chain_rdf_x${copies}" bench_chain.py \
-            --input "$dataset" --impl rdf-lazy --chain-len 3
+            --input "$dataset" --impl rdf-lazy --chain-len "$MAX_CHAIN_LEN"
         # The Python chain is both the slowest thing in the campaign and the whole point of
         # the memory plot, so it gets a timeout that grows with the dataset.
         #
@@ -406,16 +438,20 @@ cmd_scaling() {
         # slurm_benchmark.sbatch does -- keeps the more generous limit. This scaling exists to
         # stop the default from deleting the large points, not to impose a tighter ceiling on
         # someone who already thought about it.
-        scaled_timeout=$(( copies * 45 + 120 ))
+        #
+        # 70 s per copy, not 45: that was sized for a 3-filter chain, and the full chain costs
+        # 1.43x more (51.2 s against 35.8 s on ds_x1). At 32 copies the old budget of 1560 s
+        # sat under the ~1640 s the run actually needs.
+        scaled_timeout=$(( copies * 70 + 120 ))
         RUN_TIMEOUT_OVERRIDE=$(( scaled_timeout > RUN_TIMEOUT ? scaled_timeout : RUN_TIMEOUT ))
         run_one "scale_chain_python_x${copies}" bench_chain.py \
-            --input "$dataset" --impl python --chain-len 3
+            --input "$dataset" --impl python --chain-len "$MAX_CHAIN_LEN"
         unset RUN_TIMEOUT_OVERRIDE
         # uproot is the implementation the memory plot is really about: it materialises the
         # columns too, but as flat buffers rather than one Python object per event, so it
         # separates "materialising is expensive" from "PyROOT's per-event objects are".
         run_one "scale_chain_uproot_x${copies}" bench_chain.py \
-            --input "$dataset" --impl uproot --chain-len 3
+            --input "$dataset" --impl uproot --chain-len "$MAX_CHAIN_LEN"
     done
 }
 
@@ -484,25 +520,173 @@ cmd_first_read() {
     done
 }
 
-case "${1:-full}" in
+# Thread sweep on its own, so it can be repeated on a larger dataset without rerunning the
+# whole campaign. Worth doing: the speedup curve is only as trustworthy as the single-thread
+# loop is long, and on ds_x8 that loop is ~2 s, which measures thread-pool startup more than
+# it measures scaling.
+cmd_threads() {
+    have_dataset "$DS_MAIN" || return 0
+    local max_threads
+    max_threads="$("$PY" "$TEST_DIR/plot_results.py" --max-threads --for-input "$DS_MAIN" \
+        --results "$RESULTS" 2>/dev/null || echo 999)"
+    echo "=== thread sweep on $(basename "$DS_MAIN") ==="
+    for repeat in $(seq 1 "$REPEATS"); do
+        for threads in $THREADS_LIST; do
+            [[ "$threads" -gt "$max_threads" ]] && continue
+            run_one "r${repeat}_filter_rdf_t${threads}" bench_filter.py \
+                --input "$DS_MAIN" --impl rdf --threads "$threads"
+            run_one "r${repeat}_chain_rdf-lazy_l${MAX_CHAIN_LEN}_t${threads}" bench_chain.py \
+                --input "$DS_MAIN" --impl rdf-lazy --chain-len "$MAX_CHAIN_LEN" --threads "$threads"
+            run_one "r${repeat}_eff_jit_t${threads}" bench_efficiency.py \
+                --input "$DS_MAIN" --impl jit --threads "$threads"
+        done
+    done
+}
+
+# The core campaign: four experiments on one dataset, built around the two scaling laws.
+#
+# cmd_full grew to nine sweeps and 250 runs, most of them about ROOT's file format rather than
+# about this software -- clustering, basket granularity, TTree against RNTuple. Those questions
+# are answered (see RESULTS.md) and their sweeps are still here as separate subcommands; they
+# are simply no longer part of the campaign. What is left asks four things:
+#
+#   T1  strong scaling   fixed problem, more threads       -> Amdahl, USL
+#   T2  weak scaling     problem grows with threads        -> Gustafson
+#   T4  query structure  how the query is written costs    -> lazy/eager/report x chain length
+#   T5  implementations  why this tool rather than numpy   -> RDF/correctionlib/Python/uproot
+#
+# T3 is memory and has no runs of its own: every run already writes an RSS trace and a peak,
+# so the memory results are an analysis of T1 and T2 rather than a third sweep.
+cmd_core() {
+    require_dataset "$DS_CORE" || return 1
+
+    local max_threads
+    max_threads="$("$PY" "$TEST_DIR/plot_results.py" --max-threads --for-input "$DS_CORE" \
+        --results "$RESULTS" 2>/dev/null || echo 999)"
+
+    # Applies to every run below: bash's local is dynamically scoped, so run_one sees it.
+    local RUN_TIMEOUT_OVERRIDE="$RUN_TIMEOUT_CORE"
+    RUN_TIMEOUT_EFFECTIVE="$RUN_TIMEOUT_CORE"
+
+    # --exclusive reserves the node, not the filesystem. ds_x32 is ~10.8 GB on shared Lustre,
+    # so without this the first measured run carries someone else's I/O load. Tagged, and
+    # excluded from every plot.
+    echo "=== warming the page cache on $(basename "$DS_CORE") ==="
+    run_one "core_warmup" bench_filter.py --input "$DS_CORE" --impl rdf --threads 1 --tag warmup
+
+    # T1: same 11.1 M events every time, thread count varying. Amdahl's law applies to exactly
+    # this experiment and to no other in the campaign.
+    echo "=== T1 strong scaling on $(basename "$DS_CORE") ==="
+    for repeat in $(seq 1 "$REPEATS_STRONG"); do
+        for threads in $THREADS_LIST; do
+            if [[ "$threads" -gt "$max_threads" ]]; then
+                echo "  skipping ${threads} threads: only ~${max_threads} clusters-worth of parallelism"
+                continue
+            fi
+            run_one "r${repeat}_strong_filter_rdf_t${threads}" bench_filter.py \
+                --input "$DS_CORE" --impl rdf --threads "$threads"
+            run_one "r${repeat}_strong_chain_rdf-lazy_t${threads}" bench_chain.py \
+                --input "$DS_CORE" --impl rdf-lazy --chain-len "$MAX_CHAIN_LEN" \
+                --threads "$threads"
+            run_one "r${repeat}_strong_eff_jit_t${threads}" bench_efficiency.py \
+                --input "$DS_CORE" --impl jit --threads "$threads"
+        done
+    done
+
+    # T2: N threads against ds_xN, so each thread keeps the same slice of work. Ideal weak
+    # scaling is a flat wall-time line, not a falling one -- the question is whether a bigger
+    # dataset on a bigger machine costs more than the same dataset on a smaller one.
+    echo "=== T2 weak scaling: ds_xN on N threads ==="
+    for repeat in $(seq 1 "$REPEATS_WEAK"); do
+        for n in $WEAK_SERIES; do
+            local weak_ds="$DATA_DIR/ds_x${n}.root"
+            have_dataset "$weak_ds" || continue
+            run_one "r${repeat}_weak_filter_rdf_t${n}" bench_filter.py \
+                --input "$weak_ds" --impl rdf --threads "$n"
+            run_one "r${repeat}_weak_chain_rdf-lazy_t${n}" bench_chain.py \
+                --input "$weak_ds" --impl rdf-lazy --chain-len "$MAX_CHAIN_LEN" --threads "$n"
+            run_one "r${repeat}_weak_eff_jit_t${n}" bench_efficiency.py \
+                --input "$weak_ds" --impl jit --threads "$n"
+        done
+    done
+
+    # T4: single-threaded, because this is about how many event loops the query costs, and that
+    # is a property of how it was written rather than of the machine.
+    echo "=== T4 query structure: chain lengths $CHAIN_LENS ==="
+    for repeat in $(seq 1 "$REPEATS_QSTRUCT"); do
+        for len in $CHAIN_LENS; do
+            for impl in rdf-lazy rdf-eager rdf-report; do
+                run_one "r${repeat}_qstruct_chain_${impl}_l${len}" bench_chain.py \
+                    --input "$DS_CORE" --impl "$impl" --chain-len "$len"
+            done
+        done
+    done
+
+    # T5: on ds_x32 like everything else. The Python arm costs ~45 min of the campaign, which
+    # is the price of being able to say "same file, same codec, same events" about the one
+    # comparison a reader is most likely to challenge.
+    echo "=== T5 implementations on $(basename "$DS_CORE") ==="
+    for repeat in $(seq 1 "$REPEATS_IMPL"); do
+        run_one "r${repeat}_impl_filter_rdf" bench_filter.py \
+            --input "$DS_CORE" --impl rdf
+        run_one "r${repeat}_impl_filter_python_vector" bench_filter.py \
+            --input "$DS_CORE" --impl python --mode vector
+        run_one "r${repeat}_impl_filter_python_loop" bench_filter.py \
+            --input "$DS_CORE" --impl python --mode loop
+        run_one "r${repeat}_impl_filter_uproot" bench_filter.py \
+            --input "$DS_CORE" --impl uproot
+
+        run_one "r${repeat}_impl_chain_rdf-lazy" bench_chain.py \
+            --input "$DS_CORE" --impl rdf-lazy --chain-len "$MAX_CHAIN_LEN"
+        # vector-shortcircuit, not vector: RDataFrame stops at the first failing filter, and a
+        # Python path that evaluates all five steps on every event is not the same query.
+        run_one "r${repeat}_impl_chain_python" bench_chain.py \
+            --input "$DS_CORE" --impl python --chain-len "$MAX_CHAIN_LEN" \
+            --mode vector-shortcircuit
+        run_one "r${repeat}_impl_chain_uproot" bench_chain.py \
+            --input "$DS_CORE" --impl uproot --chain-len "$MAX_CHAIN_LEN" \
+            --mode vector-shortcircuit
+
+        run_one "r${repeat}_impl_eff_jit" bench_efficiency.py \
+            --input "$DS_CORE" --impl jit
+        run_one "r${repeat}_impl_eff_correctionlib" bench_efficiency.py \
+            --input "$DS_CORE" --impl correctionlib
+        run_one "r${repeat}_impl_eff_python_vector" bench_efficiency.py \
+            --input "$DS_CORE" --impl python --mode vector
+        run_one "r${repeat}_impl_eff_python_loop" bench_efficiency.py \
+            --input "$DS_CORE" --impl python --mode loop
+        run_one "r${repeat}_impl_eff_uproot" bench_efficiency.py \
+            --input "$DS_CORE" --impl uproot
+    done
+
+    [[ -n "${DRY_RUN:-}" ]] || "$PY" "$TEST_DIR/plot_results.py" --results "$RESULTS"
+}
+
+case "${1:-core}" in
     quick) cmd_quick ;;
     validate) cmd_validate ;;
+    core) cmd_core ;;
     scaling) cmd_scaling ;;
+    threads) cmd_threads ;;
     clusters) cmd_clusters ;;
     layout) cmd_layout ;;
     rntuple) cmd_rntuple ;;
     cache) cmd_first_read ;;
     full) cmd_full ;;
     *)
-        echo "Usage: $0 {quick|validate|scaling|clusters|layout|rntuple|cache|full}" >&2
+        echo "Usage: $0 {quick|validate|core|scaling|threads|clusters|layout|rntuple|cache|full}" >&2
+        echo "  core  the campaign: strong scaling, weak scaling, query structure, implementations" >&2
+        echo "  full  the previous campaign, kept for reproducing results-ares-new" >&2
         exit 1
         ;;
 esac
 
 if [[ -n "${DRY_RUN:-}" ]]; then
+    timeout_s="${RUN_TIMEOUT_EFFECTIVE:-$RUN_TIMEOUT}"
     echo
-    echo "dry run: ${DRY_RUN_COUNT:-0} runs, each capped at ${RUN_TIMEOUT}s"
-    echo "worst case ${DRY_RUN_COUNT:-0} x ${RUN_TIMEOUT}s = $(( ${DRY_RUN_COUNT:-0} * RUN_TIMEOUT / 3600 ))h"
+    echo "dry run: ${DRY_RUN_COUNT:-0} runs, each capped at ${timeout_s}s"
+    echo "worst case ${DRY_RUN_COUNT:-0} x ${timeout_s}s = $(( ${DRY_RUN_COUNT:-0} * timeout_s / 3600 ))h"
 else
     echo "Records in $RAW"
 fi
+

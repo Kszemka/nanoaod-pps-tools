@@ -27,6 +27,16 @@ COMPRESSION="${COMPRESSION:-5:5}"
 JOBS="${JOBS:-1}"
 LOG_DIR="${LOG_DIR:-$DATA_DIR/logs}"
 
+# The `core` campaign uses the ds_xN series and nothing else. The control files below it --
+# ds_s, ds_x8_coarse, ds_x8_slim, ds_x8_rntuple, ds_l -- belong to the older `full` campaign,
+# which answered its questions (clustering does not explain the scaling plateau, layout does
+# explain read amplification) and is kept only for reproducing those chapters.
+#
+# They are off by default because they are not cheap: 56 copies against the campaign's 63, so
+# leaving them on roughly doubles a generation job for files nothing currently measures.
+# WANT_CONTROLS=1 brings them back.
+WANT_CONTROLS="${WANT_CONTROLS:-0}"
+
 mkdir -p "$DATA_DIR"
 
 # set -e plus background builds would otherwise leave half-written ROOT files behind: the
@@ -96,76 +106,79 @@ wait_for_builds() {
     fi
 }
 
-# The S dataset is the source file itself -- one "copy" would just re-encode identical content.
-# Copied rather than symlinked so DATA_DIR stays self-contained on $SCRATCH.
-echo "== ds_s: copy of $SOURCE"
-if [[ ! -f "$DATA_DIR/ds_s.root" ]]; then
-    cp "$SOURCE" "$DATA_DIR/ds_s.root"
-fi
-"$PY" "$TEST_DIR/make_dataset.py" --out "$DATA_DIR/ds_s.root" --copies 1 --describe-only
-
-# ds_l is not a measurement dataset and no sweep points at it. It exists only because it is
-# the one file that shows the read anomaly -- chain-len 1 reading 10.2 GB, growing to 20.4 GB
-# at 4 threads -- and run_all.sh runs diag_io.py over it, which is read-only and takes seconds.
+# Size series. One autoflush for the whole series, so clustering does not vary along the x axis
+# and turn into a hidden second variable.
 #
-# Timing it instead of diagnosing it was the mistake it is here to avoid repeating: on Ares
-# 36 runs cost 1.77 h, 11 of them hit the timeout and recorded nothing, and in those that
-# finished setup outweighed the event loop (202 s against 84 s for efficiency/jit).
-#
-# Skip with WANT_DS_L=0 if you are not chasing the anomaly: it is 40 copies, ~11 GB and the
-# single longest item in this script.
-if [[ "${WANT_DS_L:-1}" != "0" ]]; then
-    gen ds_l 40 15000
-fi
-
-# Size series for the memory- and time-vs-size plots. One autoflush for the whole series, so
-# clustering does not vary along the x axis and turn into a hidden second variable -- which is
-# why x1 is regenerated here instead of reusing the ds_s copy above.
-#
-# ds_x8 is also the main dataset for the thread, chain and layout sweeps, so the series is not
-# an extra cost: those sweeps reuse a file the size plots need anyway.
+# It carries two experiments at once: ds_x32 is the campaign's single dataset, and the series
+# as a whole is the weak-scaling ladder, where N threads run against ds_xN. That pairing only
+# works because clusters-per-thread comes out constant across it -- 36.0, 35.5, 35.0, 34.9,
+# 34.75, 34.7 -- since RDataFrame splits work by cluster rather than by event.
 #
 # Stops at 32: measured 5.4 min per copy on an Ares node, so an x64 point alone would cost
-# ~5.8 h for one more marker on a log-log fit that already spans 1.5 decades.
+# ~5.8 h, and ds_x32 already puts the single-thread loop at ~44 s against ~1.5 s of fixed cost.
 SERIES="${SERIES:-1 2 4 8 16 32}"
 for copies in $SERIES; do
     gen "ds_x${copies}" "$copies" 10000
 done
 
-# Control for the thread-scaling plateau: the same 8 copies as ds_x8, an order of magnitude
-# fewer TTree clusters. RDataFrame parallelises over clusters, so if the plateau moves with
-# this file, it is a property of the data layout rather than of the code.
-#
-# It has to be 8 copies, matching ds_x8 exactly. A coarse twin of a different size would let
-# volume masquerade as clustering, which is the one thing this control is for -- run_benchmark.sh
-# refuses to run the comparison if the two differ in event count.
-gen ds_x8_coarse 8 250000
+if [[ "$WANT_CONTROLS" == "1" ]]; then
+    # The S dataset is the source file itself -- one "copy" would just re-encode identical
+    # content. Copied rather than symlinked so DATA_DIR stays self-contained on $SCRATCH.
+    echo "== ds_s: copy of $SOURCE"
+    if [[ ! -f "$DATA_DIR/ds_s.root" ]]; then
+        cp "$SOURCE" "$DATA_DIR/ds_s.root"
+    fi
+    "$PY" "$TEST_DIR/make_dataset.py" --out "$DATA_DIR/ds_s.root" --copies 1 --describe-only
 
-# --- read amplification: what in the file layout causes it -----------------------------------
-#
-# On the source NanoAOD the full chain reads 1.04x the compressed size of the branches it names.
-# On a Snapshot-built copy the same query reached ~560x. Both files hold the same events, so the
-# difference is layout, and these two variants separate the candidate causes.
-#
-# slim: only the branches the chain actually touches, instead of all ~2000. If amplification
-# drops, the cause is that the baskets of unrelated branches are interleaved with the wanted
-# ones, so a read of one drags in the others.
-#
-# The other candidate cause, basket granularity, needs no file of its own: ds_x8_coarse above
-# has the same content with a 25x larger autoflush and therefore much larger baskets, so
-# cmd_layout uses it as the large-basket arm.
-gen ds_x8_slim 8 10000 --slim
+    # ds_l is not a measurement dataset and no sweep points at it. It exists only because it is
+    # the one file that shows the read anomaly -- chain-len 1 reading 10.2 GB, growing to
+    # 20.4 GB at 4 threads -- and diag_io.py over it is read-only and takes seconds.
+    #
+    # Timing it instead of diagnosing it was the mistake it is here to avoid repeating: on Ares
+    # 36 runs cost 1.77 h, 11 of them hit the timeout and recorded nothing, and in those that
+    # finished setup outweighed the event loop (202 s against 84 s for efficiency/jit).
+    #
+    # 40 copies, ~11 GB, the single longest item in this script.
+    if [[ "${WANT_DS_L:-0}" != "0" ]]; then
+        gen ds_l 40 15000
+    fi
+
+    # Control for the thread-scaling plateau: the same 8 copies as ds_x8, an order of magnitude
+    # fewer TTree clusters. RDataFrame parallelises over clusters, so if the plateau moves with
+    # this file, it is a property of the data layout rather than of the code. (It did not --
+    # the dependence came out inverted, which is what retired this control.)
+    #
+    # It has to be 8 copies, matching ds_x8 exactly. A coarse twin of a different size would
+    # let volume masquerade as clustering, which is the one thing this control is for --
+    # run_benchmark.sh refuses to run the comparison if the two differ in event count.
+    gen ds_x8_coarse 8 250000
+
+    # --- read amplification: what in the file layout causes it -------------------------------
+    #
+    # On the source NanoAOD the full chain reads 1.04x the compressed size of the branches it
+    # names. On a Snapshot-built copy the same query reached ~560x. Both files hold the same
+    # events, so the difference is layout, and this variant separates the candidate causes.
+    #
+    # slim: only the branches the chain actually touches, instead of all ~2000. If amplification
+    # drops, the cause is that the baskets of unrelated branches are interleaved with the wanted
+    # ones, so a read of one drags in the others.
+    #
+    # The other candidate cause, basket granularity, needs no file of its own: ds_x8_coarse
+    # above has the same content with a 25x larger autoflush and therefore much larger baskets.
+    gen ds_x8_slim 8 10000 --slim
+fi
 
 # Everything above may still be running under JOBS>1, and what follows reads those files: the
 # RNTuple conversion needs a complete ds_x8, and the consistency check needs every description
 # written.
 wait_for_builds
 
-# RNTuple copy of the main dataset. Baskets, clusters and TTreeCache are TTree concepts, so
-# every bytes-read result in this benchmark is partly a result about the format; RNTuple is the
+# RNTuple copy of ds_x8. Baskets, clusters and TTreeCache are TTree concepts, so every
+# bytes-read result in the old campaign is partly a result about the format; RNTuple is the
 # control that says how much. Converted from ds_x8 rather than generated from the source, so
 # the two hold exactly the same events.
-if [[ -f "$DATA_DIR/ds_x8.root" && ! -f "$DATA_DIR/ds_x8_rntuple.root" ]]; then
+if [[ "$WANT_CONTROLS" == "1" && -f "$DATA_DIR/ds_x8.root" \
+      && ! -f "$DATA_DIR/ds_x8_rntuple.root" ]]; then
     echo "== ds_x8_rntuple: converting ds_x8"
     "$PY" "$TEST_DIR/make_rntuple.py" --input "$DATA_DIR/ds_x8.root" \
         --out "$DATA_DIR/ds_x8_rntuple.root" || \

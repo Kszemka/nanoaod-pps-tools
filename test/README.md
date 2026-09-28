@@ -3,6 +3,13 @@
 Co jest mierzone i dlaczego — patrz [TESTING.md](TESTING.md). Ten plik opisuje wyłącznie
 uruchomienie.
 
+Kampania nazywa się `core` i składa się z czterech eksperymentów na `ds_x32` — skalowanie
+silne (Amdahl, USL), skalowanie słabe (Gustafson), struktura zapytania i porównanie
+implementacji. Pamięć nie jest osobnym eksperymentem, tylko analizą danych zbieranych przez
+dwa pierwsze. Szczegóły w [sekcji 5](#5-pełny-bieg). Poprzednia kampania (`full`, dziewięć
+sweepów o układzie pliku, klastrowaniu i RNTuple) jest nadal w skrypcie i odtwarza wyniki
+opisane w [RESULTS.md](RESULTS.md).
+
 ## Szybki start lokalnie
 
 macOS nie ma GNU `time` ani `timeout`; bez nich odpadają peak RSS z `/usr/bin/time -v`, CPU%
@@ -39,9 +46,9 @@ w pamięci, więc to ona, a nie RDataFrame, wyznacza górny limit:
 
 ```bash
 export THREADS_LIST="1 2 4 8 16"     # nie więcej niż rdzeni
-export SCALE_SERIES="1 2 4 8"        # ~2.5 GB danych, Python mieści się w RAM
-export DS_MAIN=$PWD/test/data/ds_x8.root
-export REPEATS=2
+export DS_CORE=$PWD/test/data/ds_x8.root   # ds_x32 nie zmieści się na laptopie
+export WEAK_SERIES="1 2 4 8"          # ~2.5 GB danych, Python mieści się w RAM
+export REPEATS_STRONG=1
 ```
 
 Przy 24 GB RAM seria powyżej `x8` zaczyna wchodzić w swap na ścieżce pythonowej — pomiar czasu
@@ -111,41 +118,60 @@ Kopie pliku źródłowego. `--autoflush` steruje liczbą klastrów TTree — **t
 pliku, wyznacza górną granicę sensownego zrównoleglenia** (RDataFrame dzieli pracę po
 klastrach, nie po zdarzeniach). Skrypt sam ostrzega, jeśli klastrów jest za mało.
 
-Najprościej jednym poleceniem, bo skrypt generuje też warianty kontrolne i konwersję do
-RNTuple, a każdy plik od razu opisuje w `dataset_info.json`:
+Najprościej jednym poleceniem — każdy plik jest od razu opisywany w `dataset_info.json`:
 
 ```bash
 cd $SCRATCH/bench/nanoaod-pps-tools
 DATA_DIR=$SCRATCH/bench/data ./test/make_all_datasets.sh
 ```
 
-Co powstaje i po co:
+Powstaje **wyłącznie seria `ds_xN`** — 63 kopie, ~5.4 min każda:
 
-| plik | kopii | autoflush | rola |
-|---|---|---|---|
-| `ds_s` | 1 | (źródło) | kopia pliku źródłowego, LZMA:9 — tylko referencja |
-| `ds_x1 … ds_x32` | 1–32 | 10 000 | seria „vs rozmiar"; `ds_x1` = ścieżki jednowątkowe, `ds_x8` = **główny dataset** |
-| `ds_x8_coarse` | 8 | 250 000 | kontrola klastrowania — ta sama liczba zdarzeń, 25× większe klastry |
-| `ds_x8_slim` | 8 | 10 000 | kontrola amplifikacji odczytu — 10 gałęzi zamiast 1984 |
-| `ds_x8_rntuple` | 8 | — | konwersja `ds_x8` na RNTuple (`make_rntuple.py`) |
-| `ds_l` | 40 | 15 000 | **tylko** dla `diag_io.py` — patrz niżej |
+| plik | kopii | zdarzeń | klastrów | rola |
+|---|---:|---:|---:|---|
+| `ds_x1` | 1 | 346 825 | 36 | T2 przy 1 wątku |
+| `ds_x2` | 2 | 693 650 | 71 | T2 przy 2 wątkach |
+| `ds_x4` | 4 | 1 387 300 | 140 | T2 przy 4 wątkach |
+| `ds_x8` | 8 | 2 774 600 | 279 | T2 przy 8 wątkach |
+| `ds_x16` | 16 | 5 549 200 | 556 | T2 przy 16 wątkach |
+| `ds_x32` | 32 | 11 098 400 | 1111 | T2 przy 32 wątkach **oraz całe T1, T4 i T5** |
+
+Jeden `autoflush` (10 000) w całej serii, inaczej klastrowanie stałoby się ukrytą drugą
+zmienną i pierwszy punkt odstawałby od dopasowanej prostej.
+
+Dlaczego `ds_x32`, a nie `ds_x8`: krzywa przyspieszenia jest warta tyle, ile długa jest pozycja
+odniesienia. Na `ds_x8` pętla jednowątkowa trwa 4–11 s przy koszcie stałym 1.4–1.8 s, więc
+punkty 32- i 48-wątkowe są obciążone w dół — mierzą narzut, nie skalowanie. Na `ds_x32` ta
+pętla to ~44 s. Jego 1111 klastrów daje też zapas równoległości na ~277 wątków, więc 48 jest
+daleko od granicy narzuconej przez klastrowanie.
+
+Seria działa jako skalowanie słabe, bo **klastrów na wątek jest w niej stała liczba**: 36.0,
+35.5, 35.0, 34.9, 34.75, 34.7 dla par (1,`ds_x1`) … (32,`ds_x32`). RDataFrame dzieli pracę po
+klastrach, więc każdy wątek dostaje dokładnie tyle samo jednostek pracy — bez tego skalowanie
+słabe nie byłoby uczciwe. `ds_x12` i `ds_x24` nie istnieją i nie są potrzebne: `WEAK_SERIES`
+zostaje przy potęgach dwójki, a dodatkowe punkty 12 i 24 dotyczą wyłącznie `THREADS_LIST`
+w T1, gdzie dataset się nie zmienia.
+
+#### Pliki kontrolne starej kampanii (domyślnie **nie** powstają)
+
+`WANT_CONTROLS=1` dokłada to, czego używała kampania `full`. Nie włączaj tego bez potrzeby:
+to 56 kopii przy 63 kopiach samej kampanii, czyli podwojenie czasu generacji dla plików,
+których `core` nie dotyka.
+
+| plik | kopii | po co powstał | dlaczego nie jest już potrzebny |
+|---|---:|---|---|
+| `ds_s` | 1 | kopia źródła, LZMA:9 | inna kompresja niż reszta — nigdy nie był punktem żadnej serii |
+| `ds_x8_coarse` | 8 | kontrola klastrowania (autoflush 250 000) | hipoteza obalona — zależność wyszła odwrotna |
+| `ds_x8_slim` | 8 | kontrola amplifikacji odczytu (10 gałęzi zamiast 1984) | pytanie o układ pliku, nie o to oprogramowanie |
+| `ds_x8_rntuple` | — | porównanie TTree vs RNTuple | pytanie o format ROOT-a, nie o to oprogramowanie |
+| `ds_l` | 40 | jedyny plik z anomalią odczytu 10 GB | dodatkowo za `WANT_DS_L=1`; ~11 GB i najdłuższy element skryptu |
 
 **`ds_l` nie bierze udziału w pomiarach czasu i nie powinien.** Zmierzone na Aresie: 36 biegów
 przez 1.77 h, z czego 11 weszło w timeout i nie dało żadnego rekordu (0.92 h, ponad połowa
 zadania). W biegach, które się skończyły, dominował koszt stały, nie pętla zdarzeń —
 `efficiency/jit` to 290 s, z czego 202 s setupu i 84 s pętli. Godziny kupiły więc głównie
-narzut, a przy jednej powtórce zamiast trzech nie ma z czego liczyć rozrzutu. `SCALE_SERIES`
-kończy się na 32 kopiach, więc `ds_l` nie jest też punktem serii rozmiarowej.
-
-Zostaje w generacji z jednego powodu: to jedyny plik, na którym pojawia się anomalia odczytu
-10 GB, a `run_all.sh` puszcza na nim `diag_io.py` — diagnostykę tylko do odczytu, liczoną
-w sekundach. Jeśli nie zamierzasz jej używać, pomiń go: `SERIES="1 2 4 8 16 32" ` i tak
-zbuduje wszystko, co mierzy kampania.
-
-`ds_x1` jest generowany mimo że `ds_s` to ten sam plik — seria rozmiarowa musi mieć jednakowy
-`autoflush` we wszystkich punktach, inaczej klastrowanie stałoby się ukrytą drugą zmienną
-i pierwszy punkt odstawałby od dopasowanej prostej. `ds_x1` służy też ścieżkom
-jednowątkowym, żeby biegły na tej samej kompresji co RDataFrame.
+narzut. Został w skrypcie tylko dlatego, że na nim widać anomalię odczytu, którą bada
+`diag_io.py` — diagnostyka tylko do odczytu, liczona w sekundach.
 
 Para `ds_x8` / `ds_x8_coarse` musi mieć **identyczną liczbę zdarzeń** — inaczej objętość
 udawałaby klastrowanie, czyli dokładnie to zakłócenie, które ta kontrola ma wykluczyć.
@@ -174,7 +200,6 @@ JOBS=6 DATA_DIR=$SCRATCH/bench/data ./test/make_all_datasets.sh
 Każdy bieg ma wtedy własny log w `$DATA_DIR/logs/`, bo sześć przeplecionych strumieni jest
 nieczytelne dokładnie wtedy, gdy coś się wywali. Skrypt czeka na wszystkie przed konwersją
 RNTuple (ta potrzebuje kompletnego `ds_x8`) i przerywa, jeśli którykolwiek build zawiódł.
-
 ```bash
 sbatch -A <GRANT>-cpu -p plgrid-long -N1 -c8 --time=12:00:00 \
        --wrap "micromamba run -n pps-bench bash test/make_all_datasets.sh"
@@ -230,25 +255,51 @@ Host ares.cyfronet.pl
 
 ### 5. Pełny bieg
 
+Kampania `core` to cztery eksperymenty, wszystkie na jednym zbiorze, żeby żadne porównanie
+w całym biegu nie rozkładało się na dwa pliki:
+
+| | co zmienia | dataset | wątki | powtórki | biegów |
+|---|---|---|---|---|---|
+| **T1** skalowanie silne | liczbę wątków przy stałym problemie | `ds_x32` | 1–48 | 3 | 81 |
+| **T2** skalowanie słabe | problem **i** wątki naraz | `ds_xN` | N | 3 | 54 |
+| **T4** struktura zapytania | długość łańcucha i sposób jego zapisu | `ds_x32` | 1 | 2 | 18 |
+| **T5** implementacje | RDF / correctionlib / Python / uproot | `ds_x32` | 1 | 1 | 12 |
+
+**T1 pyta, czy tę samą robotę zrobię szybciej** — stąd przyspieszenie, efektywność równoległa
+i dopasowanie prawa Amdahla wraz z jego rozszerzeniem USL (Universal Scalability Law, które
+dokłada człon koherencji κ i jako jedyne potrafi opisać krzywą zawracającą w dół).
+**T2 pyta, czy w tym samym czasie zrobię proporcjonalnie więcej roboty** — to prawo Gustafsona,
+a ideałem jest tu płaska linia czasu, nie opadająca.
+
+**T3 nie ma własnych biegów.** Pamięć to analiza danych, które T1 i T2 zbierają i tak: każdy
+bieg zapisuje `peak_rss_kb` oraz ślad `rss_<label>.csv` próbkowany co 0.1 s. Stąd wykresy
+RSS vs liczba wątków, RSS vs rozmiar problemu i profil RSS w czasie.
+
+Poza nimi leci jeden bieg rozgrzewający `core_warmup`: `--exclusive` rezerwuje węzeł, ale nie
+Lustre, więc bez niego pierwszy mierzony bieg niosłby cudze obciążenie I/O. Nie trafia na
+żaden wykres.
+
 Najpierw sprawdź, na co idą godziny grantu — `DRY_RUN` wypisuje każdy bieg, nie uruchamiając
 żadnego. Liczby biegów nie da się policzyć z lektury skryptu, bo sweep wątków jest przycinany
 w trakcie do liczby klastrów datasetu, a całe bloki są pomijane przy braku pliku:
 
 ```bash
-DRY_RUN=1 ./test/run_benchmark.sh full | tail -3          # budżet: załóż, że wszystko istnieje
-DRY_RUN=have ./test/run_benchmark.sh full | grep SKIP     # co wypadnie przy brakach na dysku
+DRY_RUN=1 ./test/run_benchmark.sh core | tail -3          # budżet: załóż, że wszystko istnieje
+DRY_RUN=have ./test/run_benchmark.sh core | grep SKIP     # co wypadnie przy brakach na dysku
 ```
 
-Drugi tryb jest ważniejszy przy niekompletnym zestawie danych. Bloki `clusters`, `layout`
-i `rntuple` **pomijają się po cichu**, jeśli brakuje ich pliku kontrolnego — bieg kończy się
-sukcesem, tylko bez trzech eksperymentów. To właśnie te trzy odpowiadają na otwarte pytanie
-o odczyt, więc warto wiedzieć zawczasu, że nie wystartują.
+Drugi tryb jest ważniejszy przy niekompletnym zestawie danych. Punkty serii `weak`
+**pomijają się po cichu**, jeśli brakuje `ds_xN` — bieg kończy się sukcesem, tylko krzywa
+Gustafsona ma mniej punktów.
 
-Na domyślnej konfiguracji to **250 biegów**. Zmierzone czasy z poprzedniej kampanii na tym
-samym rozmiarze (2.77 mln zdarzeń) dają **~1–1.5 h**, przy limicie 8 h w pliku sbatch:
-ścieżki RDataFrame to 6–14 s na bieg, a najdroższy element to `chain/python` w serii
-rozmiarowej (276 s na `ds_x8`, a na `ds_x16` i `ds_x32` z założenia wchodzi w timeout i trafia
-na wykres jako dolne ograniczenie).
+Na domyślnej konfiguracji kampania `core` to **166 biegów** (1 rozgrzewający + 81 + 54 + 18
++ 12) i **~2.1 h**, przy limicie 8 h w pliku sbatch. Najdroższy element to `chain/python`
+z T5: ~1160 s na `ds_x32`, stąd `RUN_TIMEOUT_CORE=2400`.
+
+Stara kampania (`full`, 250 biegów, dziewięć sweepów) jest nadal w skrypcie — odtwarza
+`results-ares-new` i rozdziały RESULTS.md o układzie pliku, klastrowaniu i RNTuple.
+Nie uruchamiaj obu do jednego katalogu wyników: `plot_results.py` rysuje jeden zestaw
+wykresów albo drugi, a nie oba naraz.
 
 Uzupełnij `<GRANT>` i partycję w plikach sbatch, a dla Heliosa dodatkowo `--cpus-per-task`
 (patrz komentarz na górze pliku — specyfikację trzeba potwierdzić w aktualnej dokumentacji).
@@ -261,7 +312,37 @@ sbatch test/slurm_benchmark_helios.sbatch    # Helios
 `--exclusive` jest w obu skryptach celowo: na współdzielonym węźle wykres skalowania mierzy
 obciążenie sąsiadów, nie własny kod.
 
+Skrypt Aresa woła `run_all.sh` **bez `srun`**. Od Slurm 22.05 krok zadania nie dziedziczy
+`--cpus-per-task` z alokacji, więc `srun` potrafił przydzielić całej kampanii jeden rdzeń —
+a to nie wywala biegu, tylko spłaszcza krzywą przyspieszenia. Skrypt wsadowy i tak działa
+w cgrupie obejmującej pełną alokację. Na wszelki wypadek na starcie wypisywane są `lscpu`,
+`nproc` i affinity procesu, a gdy widocznych CPU jest mniej niż zamówiono, job **przerywa**
+zamiast policzyć złe liczby.
+
 ### 6. Kontrola i odbiór wyników
+
+Kampania `core` zostawia w katalogu wyników osiem wykresów:
+
+| plik | co pokazuje | z testu |
+|---|---|---|
+| `01_speedup_amdahl.png` | przyspieszenie vs wątki, z dopasowaniem Amdahla i USL | T1 |
+| `02_parallel_efficiency.png` | efektywność równoległa [%] | T1 |
+| `03_weak_scaling.png` | czas przy stałej pracy na wątek + przyspieszenie skalowane vs Gustafson | T2 |
+| `04_rss_vs_threads.png` | koszt pamięciowy jednego wątku | T3 |
+| `05_rss_vs_size.png` | RSS wzdłuż serii słabej | T3 |
+| `06_rss_over_time.png` | profil RSS w czasie, po jednej krzywej na liczbę wątków | T3 |
+| `07_query_structure.png` | liczba pętli po zdarzeniach i jej koszt | T4 |
+| `08_implementations.png` | przepustowość i rozbicie na fazy | T5 |
+
+Do konsoli trafiają też liczby, których nie widać na wykresie: frakcja szeregowa $s$ z Amdahla
+wraz z sufitem $1/s$, parametry $\sigma$ i $\kappa$ z USL, przewidywane optimum liczby wątków
+oraz **zmierzony** udział części szeregowej (setup + JIT) przy jednym wątku. Te dwa ostatnie
+warto porównać: jeśli dopasowane $s$ jest wyraźnie większe od zmierzonego, degradacja ma
+przyczynę poza własnym kodem szeregowym — i wtedy mówi o niej dopiero $\kappa$.
+
+Stara kampania `full` rysuje swój własny zestaw `01_…12_`. `plot_results.py` wybiera jeden
+zestaw albo drugi na podstawie etykiet w `raw.jsonl`, więc **nie mieszaj obu kampanii w jednym
+katalogu wyników**.
 
 ```bash
 sacct -j <jobid> --format=JobID,JobName,State,Elapsed,MaxRSS,AveCPU,NCPUS,ReqMem
@@ -298,21 +379,29 @@ z dwóch wersji dałoby liczby nienależące do żadnej z nich.
 | `MACHINE` | `local` | trafia do każdego rekordu; rozróżnia Ares od Heliosa na wykresach |
 | `DATA_DIR` | `test/data` | katalog z datasetami |
 | `RESULTS` | `test/results` | katalog wyjściowy |
-| `THREADS_LIST` | `1 2 4 8 16 32 48` | sweep wątków |
-| `REPEATS` | `3` | powtórzenia (raportowana mediana, wąsy min–max) |
-| `RUN_TIMEOUT` | `300` | twardy limit na pojedynczy bieg |
-| `DS_MAIN` | `$DATA_DIR/ds_x8.root` | główny dataset sweepów (`DS_L` działa jako alias) |
-| `DS_S` | `$DATA_DIR/ds_x1.root` | dataset ścieżek jednowątkowych |
-| `DS_COARSE` | `$DATA_DIR/ds_x8_coarse.root` | druga połowa pary kontrolnej klastrowania |
-| `BENCH_INPUT` | — | tryb jednego datasetu: wszystkie testy na tym pliku, seria pominięta |
+| `THREADS_LIST` | `1 2 4 8 12 16 24 32 48` | sweep wątków w T1 |
+| `DS_CORE` | `$DATA_DIR/ds_x32.root` | dataset kampanii `core` |
+| `WEAK_SERIES` | `1 2 4 8 16 32` | pary (N wątków, `ds_xN`) dla skalowania słabego |
+| `CHAIN_LENS` | `1 3 5` | długości łańcucha w T4 |
+| `REPEATS_STRONG` / `_WEAK` / `_QSTRUCT` / `_IMPL` | `3` / `3` / `2` / `1` | powtórzenia per eksperyment (mediana, wąsy min–max) |
+| `RUN_TIMEOUT_CORE` | `2400` | limit na bieg w kampanii `core` |
+| `REPEATS` | `3` | powtórzenia w starej kampanii `full` |
+| `RUN_TIMEOUT` | `300` | limit na bieg poza kampanią `core` |
+| `DS_MAIN` | `$DATA_DIR/ds_x8.root` | główny dataset starych sweepów (`DS_L` działa jako alias) |
+| `DS_S` | `$DATA_DIR/ds_x1.root` | dataset ścieżek jednowątkowych w kampanii `full` |
+| `DS_COARSE` | `$DATA_DIR/ds_x8_coarse.root` | druga połowa pary kontrolnej klastrowania (`full`) |
+| `SCALE_SERIES` | `1 2 4 8 16 32` | seria rozmiarowa starej kampanii (`cmd_scaling`) |
+| `BENCH_INPUT` | — | tryb jednego datasetu dla kampanii `full`; na `core` nie działa — tam służy do tego `DS_CORE` |
 | `DRY_RUN` | — | `1` = wypisz plan zakładając, że wszystkie datasety istnieją; `have` = tylko to, co pozwalają pliki na dysku |
-| `WANT_DS_L` | `1` | `0` pomija generację `ds_l` (40 kopii, ~11 GB, tylko dla `diag_io.py`) |
+| `WANT_CONTROLS` | `0` | `1` dokłada pliki kontrolne starej kampanii (`ds_s`, `_coarse`, `_slim`, `_rntuple`) |
+| `WANT_DS_L` | `0` | `1` dokłada `ds_l` (40 kopii, ~11 GB); wymaga też `WANT_CONTROLS=1` |
 | `JOBS` | `1` | ile datasetów generować równolegle (`make_all_datasets.sh`) |
-| `SERIES` | `1 2 4 8 16 32` | liczby kopii w serii rozmiarowej |
+| `SERIES` | `1 2 4 8 16 32` | liczby kopii w serii `ds_xN` |
 | `SAMPLE_INTERVAL` | `0.1` | okres próbkowania RSS (sekundy) |
 | `PY` | `python3` | interpreter |
 
-Bieg, który przekroczy `RUN_TIMEOUT`, jest zapisywany jako `"status": "failed"` wraz
+Bieg, który przekroczy limit czasu (`RUN_TIMEOUT_CORE` w kampanii `core`, `RUN_TIMEOUT` poza
+nią), jest zapisywany jako `"status": "failed"` wraz
 z wartością limitu, a `plot_results.py` **rysuje go jako dolne ograniczenie** — granica
 wydajności implementacji też jest wynikiem i ma być widoczna na wykresie, nie tylko w danych.
 

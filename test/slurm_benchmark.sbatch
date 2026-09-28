@@ -5,22 +5,29 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=48
-#SBATCH --mem=180G
-#SBATCH --time=06:00:00
+#SBATCH --mem=0
+#SBATCH --hint=nomultithread
+#SBATCH --time=08:00:00
 #SBATCH --exclusive
 #SBATCH --output=bench-ares-%j.out
 #SBATCH --error=bench-ares-%j.err
 
-# Ares: 2x Intel Xeon Platinum 8268, 48 cores/node, ~192 GB RAM.
+# Ares: 48 cores/node, ~192 GB RAM. The CPU model is printed by the lscpu dump below rather
+# than asserted here, because the two places in this repo that name it disagree.
 #
 # --exclusive is not optional: a shared node makes every scaling number a measurement of the
 # neighbours' load. The extra allocation cost buys the only version of this plot worth showing.
 #
-# 6 h rather than the 8 h a whole-node booking invites: the campaign is 250 runs, and the
-# per-run times measured on a dataset of this size put it at 1.5-2 h, the upper end being the
-# size series once its large Python points are allowed to finish instead of being cut off.
-# The rest is margin, kept deliberately finite because a shorter wall clock queues sooner and
-# that matters with --exclusive. Raise it if THREADS_LIST, REPEATS or SCALE_SERIES grow.
+# --mem=0 (the whole node) rather than 180G: the cgroup limit applies to page cache too, and
+# ds_x32 is ~10.8 GB. Capping it below the node's RAM puts the cgroup's reclaim policy inside
+# the memory and bytes-read measurements.
+#
+# --hint=nomultithread so that 48 means 48 physical cores. With SMT counted in, the 32- and
+# 48-thread points would be two threads sharing a core, and the flattening they show would be
+# a property of the allocation rather than of the code.
+#
+# 8 h for a ~2.1 h campaign (165 runs). The margin is wide because with --exclusive a job that
+# runs out of wall clock has to queue for a whole node again.
 
 set -euo pipefail
 
@@ -34,20 +41,34 @@ micromamba activate pps-bench
 
 cd "${SCRATCH_BENCH}/nanoaod-pps-tools"
 
+# Everything below this job measures parallel scaling, so the one thing that must be true
+# before it starts is that the process can actually reach 48 cores. Printed in full because
+# the CPU model and the SMT setting both belong in the thesis and neither is worth guessing.
+echo "=== allocation ==="
+lscpu | grep -E 'Model name|^CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|Socket|NUMA node\(s\)'
+echo "SLURM_CPUS_ON_NODE : ${SLURM_CPUS_ON_NODE:-unset}"
+echo "SLURM_CPUS_PER_TASK: ${SLURM_CPUS_PER_TASK:-unset}"
+echo "nproc              : $(nproc)"
+taskset -cp $$ || true
+
+# A benchmark that quietly runs 48 ROOT threads on 4 cores still exits 0 and still produces a
+# plot; it just produces a wrong one. Hard stop instead.
+expected_cpus="${SLURM_CPUS_PER_TASK:-48}"
+if [[ "$(nproc)" -lt "$expected_cpus" ]]; then
+    echo "ERROR: nproc=$(nproc) but the job asked for $expected_cpus CPUs." >&2
+    echo "Refusing to run: every scaling number would be a measurement of the allocation." >&2
+    exit 1
+fi
+echo
+
 export PY="$(command -v python)"
 export DATA_DIR="${SCRATCH_BENCH}/data"
 export RESULTS="${SCRATCH_BENCH}/results-ares"
-export THREADS_LIST="1 2 4 8 16 32 48"
-export REPEATS=3
-# The default 300 s kills the Python arm of the size series: at the measured 10130 events/s
-# the chain needs 550 s on ds_x16 and 1098 s on ds_x32, and ds_x8 lands at 276 s, only 8%
-# under the limit. Those runs would be recorded as failures carrying no peak_rss_kb, which
-# removes the points where the memory curves diverge most -- the whole reason the large
-# datasets exist.
-#
-# cmd_scaling also scales the limit per dataset and takes whichever of the two is larger, so
-# this raises the floor for every other run rather than fighting it.
-export RUN_TIMEOUT=1800
+export THREADS_LIST="1 2 4 8 12 16 24 32 48"
+export DS_CORE="${DATA_DIR}/ds_x32.root"
+# Repeats are set per experiment in run_benchmark.sh; REPEATS only still covers the legacy
+# `full` campaign, which this job no longer runs.
+export RUN_TIMEOUT_CORE=2400
 
 # run_benchmark.sh appends to $RESULTS/raw.jsonl, so a directory left over from an earlier
 # campaign quietly mixes its records in. plot_results.py separates them by schema_version, but
@@ -60,7 +81,12 @@ if [[ -f "${RESULTS}/raw.jsonl" ]]; then
 fi
 
 # Datasets are built by their own job (see README): with LZMA they can outlast this one.
-srun --cpu-bind=cores bash test/run_all.sh --skip-datasets
+#
+# No srun. Since Slurm 22.05 a job step does not inherit --cpus-per-task from the batch
+# allocation, so `srun` here could hand the whole campaign a single CPU -- which fails
+# silently, as a flat speedup curve. The batch script already runs inside a cgroup covering
+# the full allocation, and this is one process on one node, so the step bought nothing.
+bash test/run_all.sh --skip-datasets
 
 # Independent confirmation of the numbers the script collected itself. `seff` is not installed
 # on Ares, so read the accounting database directly.
