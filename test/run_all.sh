@@ -3,7 +3,7 @@
 # Correctness checks, then the benchmark campaign, stopping at the first failure.
 #
 #   1. validate.py       -- nothing below is meaningful if the implementations disagree
-#   2. run_benchmark.sh  -- T1/T2/T4/T5/T6 on the dataset DATASET selects, then the plots
+#   2. run_benchmark.sh  -- T1/T2/T4/T5/T6/T2S on the dataset DATASET selects, then the plots
 #
 # Usage:
 #   DATA_DIR=/path/to/data ./test/run_all.sh

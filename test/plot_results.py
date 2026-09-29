@@ -26,7 +26,7 @@ CSV_FIELDS = [
     "peak_rss_kb", "rss_baseline_kb",
     "peak_rss_net_kb", "time_maxrss_kb", "cpu_percent", "elapsed_s", "cpu_loop",
     "cores_busy_loop", "events_per_s", "tracks_per_s", "event_loops", "exit_code", "timeout_s",
-    "root_version",
+    "pinned_core", "cpus_allowed", "os_threads", "root_version", "uproot_version",
 ]
 
 
@@ -264,8 +264,13 @@ def plot_core(ok, results_dir, plt, save, outputs):
     strong = [r for r in strong_all if r.get("threads")]
     slim = [r for r in slim_all if r.get("threads")]
     weak = core_rows(ok, "weak")
+    weak_slim = core_rows(ok, "weakslim")
     qstruct = core_rows(ok, "qstruct")
     impls = core_rows(ok, "impl")
+    # uproot with its own thread pool is a separate point, not a repeat of the pinned one.
+    for r in impls:
+        if r.get("tag") == "own-threads":
+            r["impl"] = f"{r['impl']} (own threads)"
 
     distinct = check_results_agree(strong_all + slim_all)
     for test, count in sorted(distinct.items()):
@@ -278,7 +283,28 @@ def plot_core(ok, results_dir, plt, save, outputs):
         if not disagree:
             print("  T5: every implementation gives the same answer")
 
-    ticks = sorted({r["threads"] for r in strong + weak + slim}) or [1]
+    # What each extra ImplicitMT worker costs. On the full schema every worker builds its own
+    # ~2000-branch tree; on the slim copy the same slopes should be close to zero.
+    for name, rows_set in (("full schema", strong), ("slim", slim)):
+        for test in CORE_TEST_LABEL:
+            cost = per_thread_cost(rows_set, test)
+            if cost:
+                print(f"  per extra thread [{name}] {test}: "
+                      f"{cost.get('rss_mb', float('nan')):+.1f} MB RSS, "
+                      f"{cost.get('bytes_mb', float('nan')):+.2f} MB read, "
+                      f"{cost.get('cpu_s', float('nan')):+.3f} CPU-s in the loop")
+
+    # T5's RDataFrame runs are the same configuration as T1's t0 runs. A gap between the two is
+    # a property of when T5 ran, not of the implementation.
+    rdf_impl = {"filter": "rdf", "chain": "rdf-lazy", "efficiency": "jit"}
+    for test, impl in rdf_impl.items():
+        t5 = [r["wall_loop"] for r in impls if r.get("test") == test and r.get("impl") == impl]
+        t0 = serial_loop([r for r in strong_all if r.get("impl") == impl], test)
+        if t5 and t0:
+            print(f"  T5 {test}/{impl}: loop {median(t5):.2f} s (n={len(t5)}) against "
+                  f"T1 t0 {t0:.2f} s ({(median(t5) / t0 - 1) * 100:+.0f}%)")
+
+    ticks = sorted({r["threads"] for r in strong + weak + weak_slim + slim}) or [1]
 
     def thread_axis(ax):
         ax.set_xscale("log", base=2)
@@ -367,23 +393,31 @@ def plot_core(ok, results_dir, plt, save, outputs):
     # ~24x at 32 threads against a measured 3-5x, because what grows here is not a serial
     # region but a cost paid once per worker thread. The straight-line fit t = w + c*N reads
     # that cost off directly.
+    #
+    # T2S (dashed) is the same series on slim copies. A unit of work on the full files is
+    # 0.24-0.52 s of loop per thread, less than the ~1 s of CPU a worker spends building its
+    # tree, so the solid curves are mostly that setup and the dashed ones are the work.
     if weak:
         fig, (ax_t, ax_s) = plt.subplots(1, 2, figsize=(12, 4.8))
         for test, pretty in CORE_TEST_LABEL.items():
-            sub = [r for r in weak if r.get("test") == test]
-            xs, ys = curve(sub, "threads", "wall_loop")
-            if len(xs) < 2:
-                continue
             colour = CORE_TEST_COLOUR[test]
-            for _, points in series(sub, ("test",), "threads", "wall_loop").items():
-                plot_series(ax_t, points, pretty, lw=2, color=colour)
-            intercept, slope = fit_linear(xs, ys)
-            ax_t.plot(xs, [intercept + slope * n for n in xs], ls="--", lw=1, color=colour,
-                      label=f"fit: {slope * 1000:.0f} ms per extra thread")
-            print(f"  weak {test}: loop = {intercept:.3f} s + {slope * 1000:.1f} ms x threads")
-            ax_s.plot(xs, [n * ys[0] / y for n, y in zip(xs, ys)], marker="o", lw=2,
-                      color=colour, label=pretty)
-        weak_ticks = sorted({r["threads"] for r in weak if r.get("threads")}) or ticks
+            for rows_set, style, suffix in ((weak, "-", ""), (weak_slim, "--", ", slim")):
+                sub = [r for r in rows_set if r.get("test") == test]
+                xs, ys = curve(sub, "threads", "wall_loop")
+                if len(xs) < 2:
+                    continue
+                intercept, slope = fit_linear(xs, ys)
+                label = f"{pretty}{suffix}: {slope * 1000:.0f} ms per extra thread"
+                for _, points in series(sub, ("test",), "threads", "wall_loop").items():
+                    plot_series(ax_t, points, label, lw=2, ls=style, color=colour)
+                if not suffix:
+                    ax_t.plot(xs, [intercept + slope * n for n in xs], ls=":", lw=1,
+                              color=colour)
+                print(f"  weak{suffix} {test}: loop = {intercept:.3f} s + "
+                      f"{slope * 1000:.1f} ms x threads")
+                ax_s.plot(xs, [n * ys[0] / y for n, y in zip(xs, ys)], marker="o", lw=2,
+                          ls=style, color=colour, label=pretty + suffix)
+        weak_ticks = sorted({r["threads"] for r in weak + weak_slim if r.get("threads")}) or ticks
         ax_s.plot(weak_ticks, weak_ticks, lw=1, color="#bbbbbb", label="ideal ($S = n$)")
         for ax in (ax_t, ax_s):
             ax.set_xscale("log", base=2)
@@ -397,7 +431,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
         ax_t.set_title("Constant work per thread: flat is ideal")
         speedup_axis(ax_s, weak_ticks)
         ax_s.set_ylabel("scaled speedup")
-        ax_s.set_title("T2 scaled speedup")
+        ax_s.set_title("T2 scaled speedup" + (" (dashed: T2S, slim)" if weak_slim else ""))
         save(fig, "03_weak_scaling.png")
 
     # (4) What the speedup curve cannot show. Every worker gets its own TTreeCache and its own
@@ -464,9 +498,9 @@ def plot_core(ok, results_dir, plt, save, outputs):
     # not straddle two datasets.
     #
     # Events/s rather than tracks/s: only the efficiency test reports a track count, and a
-    # figure keyed on it silently dropped the filter and chain rows. The CPU% next to each bar
-    # is there so that a bar which is fast because it used more cores cannot pass for one that
-    # is fast per core.
+    # figure keyed on it silently dropped the filter and chain rows. The cores busy in the loop
+    # next to each bar are there so that a bar which is fast because it used more cores cannot
+    # pass for one that is fast per core.
     impl_tests = [t for t in CORE_TEST_LABEL if any(r.get("test") == t for r in impls)]
     if impl_tests:
         def impl_name(key):
@@ -488,11 +522,14 @@ def plot_core(ok, results_dir, plt, save, outputs):
             ax_tp, ax_ph = axes[row]
             names = [impl_name(k) for k in keys]
             rates = [values[k][0] for k in keys]
-            cpu = aggregate(sub, ("impl", "mode"), "cpu_percent")
+            busy = aggregate(sub, ("impl", "mode"), "cores_busy")
+            pinned = {(r.get("impl"), r.get("mode")) for r in sub
+                      if r.get("pinned_core") is not None}
             ax_tp.barh(names, rates, color=CORE_TEST_COLOUR[test])
             for index, key in enumerate(keys):
-                if key in cpu:
-                    ax_tp.text(rates[index], index, f"  {cpu[key][0]:.0f}% CPU",
+                if key in busy:
+                    note = ", pinned" if key in pinned else ""
+                    ax_tp.text(rates[index], index, f"  {busy[key][0]:.2f} cores{note}",
                                va="center", fontsize=7)
             ax_tp.set_xscale("log")
             ax_tp.set_xlim(right=max(rates) * 6)
@@ -512,7 +549,9 @@ def plot_core(ok, results_dir, plt, save, outputs):
             ax_ph.set_xlim(left=0.05)
             ax_ph.grid(alpha=0.3, axis="x")
         impl_input = impls[0].get("input", "one input")
-        axes[0][0].set_title(f"T5 throughput on {impl_input}, ImplicitMT off")
+        axes[0][0].set_title(f"T5 throughput on {impl_input}, ImplicitMT off"
+                             + (", one core" if any(r.get("pinned_core") is not None
+                                                    for r in impls) else ""))
         axes[0][1].set_title("Fixed cost against the event loop")
         axes[0][1].legend(fontsize=8, loc="lower right")
         axes[-1][0].set_xlabel("events / s")
@@ -746,6 +785,36 @@ def fit_usl(points):
             if error < best[0]:
                 best = (error, sigma, kappa)
     return best[1], best[2]
+
+
+def per_thread_cost(records, test):
+    """
+    Slopes against the thread count of the medians of peak RSS [MB], bytes read in the loop
+    [MB] and CPU spent in the loop [s], over the ImplicitMT runs of one test.
+
+    CPU is what the threads burned, not wall time: a cost that every worker pays in parallel
+    still shows up here, which is what separates "each thread does extra work" from "threads
+    wait for each other". None when there are fewer than two thread counts.
+    """
+    buckets = defaultdict(list)
+    for r in records:
+        if r.get("test") != test or not r.get("threads") or r.get("wall_loop") is None:
+            continue
+        cpu = r.get("cpu_loop")
+        if cpu is None and r.get("cores_busy") is not None:
+            cpu = r["cores_busy"] * r["wall_loop"]
+        buckets[r["threads"]].append((r.get("peak_rss_kb"), r.get("bytes_loop"), cpu))
+    if len(buckets) < 2:
+        return None
+    xs = sorted(buckets)
+    out = {}
+    for index, (name, scale) in enumerate((("rss_mb", 1024), ("bytes_mb", 1e6), ("cpu_s", 1))):
+        points = [(x, median([v[index] for v in buckets[x] if v[index] is not None]))
+                  for x in xs]
+        points = [(x, y / scale) for x, y in points if y is not None]
+        if len(points) > 1:
+            out[name] = fit_linear([p[0] for p in points], [p[1] for p in points])[1]
+    return out
 
 
 def serial_loop(records, test):

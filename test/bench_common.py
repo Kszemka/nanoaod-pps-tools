@@ -338,5 +338,16 @@ class Bench:
             self.record["tracks_per_s"] = n_tracks / loop
         if loop > 0 and "cpu_loop" in self.record:
             self.record["cores_busy_loop"] = self.record["cpu_loop"] / loop
+
+        # Threads alive at the end, not just Python's: thread pools (ImplicitMT's, uproot's)
+        # outlive the loop, so a run that claims to be single-threaded can be checked. Linux only.
+        try:
+            self.record["os_threads"] = len(os.listdir("/proc/self/task"))
+        except OSError:
+            self.record["os_threads"] = None
+        self.record["cpus_allowed"] = (len(os.sched_getaffinity(0))
+                                       if hasattr(os, "sched_getaffinity") else None)
+        uproot = sys.modules.get("uproot")
+        self.record["uproot_version"] = getattr(uproot, "__version__", None)
         print("BENCH " + json.dumps(self.record))
         return self.record

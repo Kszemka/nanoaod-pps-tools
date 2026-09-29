@@ -26,8 +26,8 @@
 # 48-thread points would be two threads sharing a core, and the flattening they show would be
 # a property of the allocation rather than of the code.
 #
-# The synthetic campaign is ~1.4 h (327 runs plus validate.py and writing the slim copy on the
-# first job; `DRY_RUN=1 test/run_benchmark.sh` lists them). The real one has 336 runs and a
+# The synthetic campaign is ~1.5 h (406 runs plus validate.py and writing the slim copies on the
+# first job; `DRY_RUN=1 test/run_benchmark.sh` lists them). The real one has 424 runs and a
 # ~4x larger core input, so T1, T2 and T6 take roughly 3x longer: budget ~3-4 h. The margin
 # covers a slow Lustre day; a job that runs out of wall clock has to queue again.
 #

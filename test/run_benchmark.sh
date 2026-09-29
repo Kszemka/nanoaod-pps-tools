@@ -9,8 +9,10 @@
 #   T1  strong scaling   core input (ds_x32 / core.txt), thread count varying  -> Amdahl, USL
 #   T2  weak scaling     N threads on N units of work (ds_xN / weak_N.txt)
 #   T4  query structure  lazy / eager / Report() x chain length  (single thread, impl input)
-#   T5  implementations  RDataFrame / correctionlib / Python / uproot on the impl input
+#   T5  implementations  RDataFrame / correctionlib / Python / uproot on the impl input,
+#                        pinned to one core (PIN_CORE)
 #   T6  file width       T1 again on the slim copy of the core input: 6 columns, same events
+#   T2S weak on slim     T2 again on slim copies of the weak inputs
 #
 # T3 is memory and has no runs of its own: every run writes an RSS trace and a peak.
 # T1 and T6 include t0, ImplicitMT off, so speedup can be quoted against the fastest serial
@@ -47,8 +49,11 @@ CHAIN_LENS="${CHAIN_LENS:-1 3 5}"
 REPEATS_STRONG="${REPEATS_STRONG:-5}"
 REPEATS_WEAK="${REPEATS_WEAK:-3}"
 REPEATS_QSTRUCT="${REPEATS_QSTRUCT:-2}"
-REPEATS_IMPL="${REPEATS_IMPL:-1}"
+REPEATS_IMPL="${REPEATS_IMPL:-3}"
 REPEATS_SLIM="${REPEATS_SLIM:-3}"
+# T5 compares implementations on one core. uproot starts its own threads however its executors
+# are set (442-444% CPU on Ares with TrivialExecutor), so the core is enforced from outside.
+PIN_CORE="${PIN_CORE:-2}"
 # The Python chain on ds_x32 needs ~1100 s. A timeout does not slow anything down -- it only
 # decides whether a slow run is recorded or thrown away.
 RUN_TIMEOUT="${RUN_TIMEOUT:-2400}"
@@ -64,6 +69,7 @@ case "$DATASET" in
         DS_SLIM="${DS_SLIM:-$DATA_DIR/ds_x32_slim.root}"
         # Clusters per thread are flat to 1% across ds_x1..ds_x32.
         WEAK_PATTERN="${WEAK_PATTERN:-ds_x%s.root}"
+        WEAK_SLIM_PATTERN="${WEAK_SLIM_PATTERN:-ds_x%s_slim.root}"
         WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32}"
         ;;
     real)
@@ -73,6 +79,8 @@ case "$DATASET" in
         DS_SLIM="${DS_SLIM:-$DATA_DIR/core_slim.txt}"
         # make_filelists.py sizes weak_N to N x (core events / 48); sets.json has the deviations.
         WEAK_PATTERN="${WEAK_PATTERN:-weak_%s.txt}"
+        # weak_N lists are subsets of core, so their slim files already exist in slim/.
+        WEAK_SLIM_PATTERN="${WEAK_SLIM_PATTERN:-weak_%s_slim.txt}"
         WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32 48}"
         ;;
     *)
@@ -83,6 +91,10 @@ esac
 
 weak_input() {
     printf "%s/${WEAK_PATTERN}" "$DATA_DIR" "$1"
+}
+
+weak_slim_input() {
+    printf "%s/${WEAK_SLIM_PATTERN}" "$DATA_DIR" "$1"
 }
 
 # The .root files behind an input: the file itself, or a list's entries with relative paths
@@ -151,17 +163,29 @@ fi
 
 TIMEOUT_BIN="$(command -v timeout || command -v gtimeout || true)"
 
+TASKSET_BIN="$(command -v taskset || true)"
+if [[ -n "$TASKSET_BIN" ]] && ! "$TASKSET_BIN" -c "$PIN_CORE" true 2>/dev/null; then
+    echo "WARNING: cannot pin to core $PIN_CORE; T5 runs unpinned." >&2
+    TASKSET_BIN=""
+elif [[ -z "$TASKSET_BIN" && -z "${DRY_RUN:-}" ]]; then
+    echo "WARNING: taskset not found; T5 runs unpinned and uproot may use several cores." >&2
+fi
+
 # run_one <label> <script> [args...]
 #
 # The RSS trace is written by the benchmark process itself, into $RSS_TRACE: the command is
 # wrapped in `timeout` and `/usr/bin/time`, so a pid seen from here would be the wrapper's.
+# With PINNED=1 the benchmark process (and every thread it starts) is confined to PIN_CORE.
 run_one() {
     local label="$1" script="$2"
     shift 2
+    local pinned=""
+    [[ -n "${PINNED:-}" && -n "$TASKSET_BIN" ]] && pinned="$PIN_CORE"
 
     if [[ -n "${DRY_RUN:-}" ]]; then
         DRY_RUN_COUNT=$((${DRY_RUN_COUNT:-0} + 1))
-        printf '  [%3d] %-44s %s %s\n' "$DRY_RUN_COUNT" "$label" "$script" "$*"
+        printf '  [%3d] %-44s %s %s%s\n' "$DRY_RUN_COUNT" "$label" "$script" "$*" \
+            "${pinned:+  [core $pinned]}"
         return
     fi
 
@@ -171,6 +195,7 @@ run_one() {
     export RSS_TRACE="$RESULTS/rss_${label}.csv"
 
     local -a cmd=("$PY" "$TEST_DIR/$script" "$@")
+    [[ -n "$pinned" ]] && cmd=("$TASKSET_BIN" -c "$pinned" "${cmd[@]}")
     [[ -n "$TIME_BIN" ]] && cmd=("$TIME_BIN" -v -o "$time_file" "${cmd[@]}")
     [[ -n "$TIMEOUT_BIN" ]] && cmd=("$TIMEOUT_BIN" "$RUN_TIMEOUT" "${cmd[@]}")
 
@@ -186,10 +211,10 @@ run_one() {
         return
     fi
 
-    "$PY" - "$stdout_file" "$time_file" "$label" >>"$RAW" <<'PYEOF'
+    "$PY" - "$stdout_file" "$time_file" "$label" "$pinned" >>"$RAW" <<'PYEOF'
 import json, re, sys
 
-stdout_path, time_path, label = sys.argv[1], sys.argv[2], sys.argv[3]
+stdout_path, time_path, label, pinned = sys.argv[1:5]
 record = {}
 with open(stdout_path) as f:
     for line in f:
@@ -197,6 +222,7 @@ with open(stdout_path) as f:
             record = json.loads(line[6:])
 record["label"] = label
 record["status"] = "ok"
+record["pinned_core"] = int(pinned) if pinned else None
 
 patterns = {
     "time_maxrss_kb": (r"Maximum resident set size \(kbytes\):\s*(\d+)", int),
@@ -226,14 +252,26 @@ PYEOF
 # --exclusive reserves the node, not the filesystem: the inputs are tens of GB on shared Lustre,
 # so without this the first run on each file carries a cold read. Reading the whole files
 # (rather than running one benchmark) warms every branch the tests touch. make_slim.py writes
-# through .partial names, so an existing DS_SLIM is always a complete one.
+# through .partial names, so an existing slim input is always a complete one.
+SLIM_INPUTS=("$DS_SLIM")
+for n in $WEAK_SERIES; do
+    SLIM_INPUTS+=("$(weak_slim_input "$n")")
+done
 if [[ -z "${DRY_RUN:-}" ]]; then
     if [[ ! -f "$DS_SLIM" ]]; then
         echo "=== writing $(basename "$DS_SLIM") ==="
         "$PY" "$TEST_DIR/make_slim.py" --input "$DS_CORE" --output "$DS_SLIM" || exit 1
     fi
+    for n in $WEAK_SERIES; do
+        slim_input="$(weak_slim_input "$n")"
+        if [[ ! -f "$slim_input" ]]; then
+            echo "=== writing $(basename "$slim_input") ==="
+            "$PY" "$TEST_DIR/make_slim.py" --input "$(weak_input "$n")" --output "$slim_input" \
+                || exit 1
+        fi
+    done
     echo "=== warming the page cache ==="
-    for input in "${INPUTS[@]}" "$DS_SLIM"; do
+    for input in "${INPUTS[@]}" "${SLIM_INPUTS[@]}"; do
         list_files "$input"
     done | sort -u | while IFS= read -r file; do
         cat "$file" >/dev/null
@@ -291,9 +329,12 @@ for repeat in $(seq 1 "$REPEATS_QSTRUCT"); do
 done
 
 # T5: every implementation on one input, so the comparison a reader is most likely to
-# challenge is "same files, same codec, same events". The Python chain alone costs ~20 min
-# on ~11 M events, which is why the impl input is not the (larger) core input on real data.
-echo "=== T5 implementations on $(basename "$DS_IMPL") ==="
+# challenge is "same files, same codec, same events". The Python chain alone costs ~16 min
+# on ~11 M events, which is why the impl input is not the (larger) core input on real data,
+# and why it runs in the first repeat only. With a single run the RDF chain and efficiency
+# came out 12-24% slower than the identical T1 t0 runs, hence the repeats for the rest.
+echo "=== T5 implementations on $(basename "$DS_IMPL")${TASKSET_BIN:+, pinned to core $PIN_CORE} ==="
+export PINNED=1
 for repeat in $(seq 1 "$REPEATS_IMPL"); do
     run_one "r${repeat}_impl_filter_rdf" bench_filter.py --input "$DS_IMPL" --impl rdf
     run_one "r${repeat}_impl_filter_python_vector" bench_filter.py \
@@ -303,7 +344,9 @@ for repeat in $(seq 1 "$REPEATS_IMPL"); do
     run_one "r${repeat}_impl_filter_uproot" bench_filter.py --input "$DS_IMPL" --impl uproot
 
     run_one "r${repeat}_impl_chain_rdf-lazy" bench_chain.py --input "$DS_IMPL" --impl rdf-lazy
-    run_one "r${repeat}_impl_chain_python" bench_chain.py --input "$DS_IMPL" --impl python
+    if [[ "$repeat" -eq 1 ]]; then
+        run_one "r${repeat}_impl_chain_python" bench_chain.py --input "$DS_IMPL" --impl python
+    fi
     run_one "r${repeat}_impl_chain_uproot" bench_chain.py --input "$DS_IMPL" --impl uproot
 
     run_one "r${repeat}_impl_eff_jit" bench_efficiency.py --input "$DS_IMPL" --impl jit
@@ -315,6 +358,14 @@ for repeat in $(seq 1 "$REPEATS_IMPL"); do
         --input "$DS_IMPL" --impl python --mode loop
     run_one "r${repeat}_impl_eff_uproot" bench_efficiency.py --input "$DS_IMPL" --impl uproot
 done
+unset PINNED
+# uproot as a user gets it, with whatever threads it starts; a separate, labelled point.
+run_one "r1_impl_filter_uproot-default" bench_filter.py --input "$DS_IMPL" --impl uproot \
+    --tag own-threads
+run_one "r1_impl_chain_uproot-default" bench_chain.py --input "$DS_IMPL" --impl uproot \
+    --tag own-threads
+run_one "r1_impl_eff_uproot-default" bench_efficiency.py --input "$DS_IMPL" --impl uproot \
+    --tag own-threads
 
 # T6: T1's sweep on an input that differs from the core one only in width. If the per-thread
 # cost (on ds_x32: ~245 MB RSS and ~55 ms of loop time per extra thread) comes from the ~2000
@@ -328,6 +379,23 @@ for repeat in $(seq 1 "$REPEATS_SLIM"); do
             --input "$DS_SLIM" --impl rdf-lazy --threads "$threads"
         run_one "r${repeat}_slim_eff_jit_t${threads}" bench_efficiency.py \
             --input "$DS_SLIM" --impl jit --threads "$threads"
+    done
+done
+
+# T2S: T2 on the slim copies. On the full files one unit of work (0.24-0.52 s of loop per
+# thread) is smaller than the ~1 s of CPU each worker spends building its ~2000-branch tree,
+# so T2 mostly measures that setup. Here the setup is gone and what remains is the scaling of
+# the work itself.
+echo "=== T2S weak scaling on slim: $WEAK_SLIM_PATTERN on N threads ==="
+for repeat in $(seq 1 "$REPEATS_WEAK"); do
+    for n in $WEAK_SERIES; do
+        weak_ds="$(weak_slim_input "$n")"
+        run_one "r${repeat}_weakslim_filter_rdf_t${n}" bench_filter.py \
+            --input "$weak_ds" --impl rdf --threads "$n"
+        run_one "r${repeat}_weakslim_chain_rdf-lazy_t${n}" bench_chain.py \
+            --input "$weak_ds" --impl rdf-lazy --threads "$n"
+        run_one "r${repeat}_weakslim_eff_jit_t${n}" bench_efficiency.py \
+            --input "$weak_ds" --impl jit --threads "$n"
     done
 done
 

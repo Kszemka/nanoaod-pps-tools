@@ -28,8 +28,17 @@ import bench_common as bc
 
 ROOT = bc.ROOT
 
-# ROOT::ECompressionAlgorithm values as stored in a TFile; RSnapshotOptions takes this enum.
+# Compression algorithm values as stored in a TFile.
 ALGORITHMS = {1: "kZLIB", 2: "kLZMA", 4: "kLZ4", 5: "kZSTD"}
+
+
+def compression_algorithm(name):
+    """
+    The value RSnapshotOptions.fCompressionAlgorithm accepts. Up to ROOT 6.3x the field is a
+    ROOT::ECompressionAlgorithm and wants ROOT::kZSTD; from 6.40 that enum is gone and the field
+    is an int, which RCompressionSetting::EAlgorithm converts to.
+    """
+    return getattr(ROOT.ROOT, name, None) or getattr(ROOT.RCompressionSetting.EAlgorithm, name)
 
 
 def slim_columns():
@@ -42,7 +51,7 @@ def slim_file(source, output, autoflush):
     options = ROOT.RDF.RSnapshotOptions()
     options.fMode = "RECREATE"
     algorithm = ALGORITHMS.get(layout["compression_algorithm"], "kZSTD")
-    options.fCompressionAlgorithm = getattr(ROOT.ROOT, algorithm)
+    options.fCompressionAlgorithm = compression_algorithm(algorithm)
     options.fCompressionLevel = layout["compression_level"] or 5
     options.fAutoFlush = autoflush or round(layout["entries"] / max(layout["clusters"], 1))
 
