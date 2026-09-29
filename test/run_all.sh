@@ -3,10 +3,11 @@
 # Correctness checks, then the benchmark campaign, stopping at the first failure.
 #
 #   1. validate.py       -- nothing below is meaningful if the implementations disagree
-#   2. run_benchmark.sh  -- T1/T2/T4/T5 on the ds_x1..ds_x32 series, then the plots
+#   2. run_benchmark.sh  -- T1/T2/T4/T5/T6 on the dataset DATASET selects, then the plots
 #
 # Usage:
 #   DATA_DIR=/path/to/data ./test/run_all.sh
+#   DATASET=real DATA_DIR=/path/to/lists ./test/run_all.sh
 #
 # VALIDATE_THREADS sets the thread count of the 1-vs-N check on the compiled kernel.
 
@@ -30,7 +31,7 @@ LOG="$RESULTS/run_all_$(date +%Y%m%d_%H%M%S).log"
 
 echo "python : $PY" | tee -a "$LOG"
 echo "machine: ${MACHINE:-local}" | tee -a "$LOG"
-echo "data   : $DATA_DIR" | tee -a "$LOG"
+echo "data   : $DATA_DIR (${DATASET:-synthetic})" | tee -a "$LOG"
 echo "results: $RESULTS" | tee -a "$LOG"
 
 # uproot and awkward carry the columnar baseline. Without them the Python side of the comparison

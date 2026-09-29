@@ -448,8 +448,8 @@ df = apply_diamond_efficiency_jit(
 
 The payload is evaluated **once per region** at setup and the resulting values are baked into a
 `constexpr std::array` inside a JIT-compiled C++ kernel, so the event loop never calls back into
-Python. This is what makes the step roughly seven times faster than evaluating `correctionlib`
-per track (T5 in `test/README.md`).
+Python. This is what makes the step roughly four times faster than evaluating `correctionlib`
+per track on 11 M events (7.6 s against 31.5 s on Ares; T5 in `test/README.md`).
 
 Declared kernels are cached on the `ROOT` module, so re-importing or reloading the module does
 not trigger cling redefinition errors in a long-lived notebook session.
@@ -548,6 +548,9 @@ nanoaod-pps-tools/
 │   ├── README.md                    # What is measured and how to run it
 │   ├── run_all.sh                   # Validation + campaign
 │   ├── run_benchmark.sh             # Campaign driver
+│   ├── make_slim.py                 # 6-branch copy of the T1 input for the file-width test
+│   ├── inventory_files.py           # Per-file CSV (events, clusters, schema, PPS); transfer check
+│   ├── make_filelists.py            # Real-data file lists from the inventory
 │   ├── slurm_benchmark.sbatch       # Ares job
 │   ├── bench_*.py                   # Individual benchmarks
 │   ├── impl_*.py                    # RDataFrame, uproot and numpy implementations
@@ -573,8 +576,9 @@ nanoaod-pps-tools/
 ## Benchmarks
 
 The `test/` directory holds a benchmark suite comparing RDataFrame against `uproot`/`awkward`
-and a pure Python/numpy baseline, on the `ds_x1`–`ds_x32` series (0.35 to 11 million events):
-strong and weak thread scaling, query structure, and implementation comparison.
+and a pure Python/numpy baseline, on the `ds_x1`–`ds_x32` series (0.35 to 11 million events)
+and on real 2023 Tier0 NanoAOD file lists (`DATASET=real`): strong and weak thread scaling,
+query structure, implementation comparison and file width.
 
 ```bash
 python test/validate.py              # cross-check that implementations agree

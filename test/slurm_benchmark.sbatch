@@ -19,16 +19,20 @@
 # neighbours' load. The extra allocation cost buys the only version of this plot worth showing.
 #
 # --mem=0 (the whole node) rather than 180G: the cgroup limit applies to page cache too, and
-# ds_x32 is ~10.8 GB. Capping it below the node's RAM puts the cgroup's reclaim policy inside
-# the memory and bytes-read measurements.
+# the inputs are ~21 GB (synthetic) to ~60 GB (real). Capping it below the node's RAM puts the
+# cgroup's reclaim policy inside the memory and bytes-read measurements.
 #
 # --hint=nomultithread so that 48 means 48 physical cores. With SMT counted in, the 32- and
 # 48-thread points would be two threads sharing a core, and the flattening they show would be
 # a property of the allocation rather than of the code.
 #
-# 3 h for a ~1.2 h campaign (165 runs plus validate.py; `DRY_RUN=1 test/run_benchmark.sh`
-# lists them). The margin covers a slow Lustre day; a shorter request queues sooner for a whole
-# node, and a job that runs out of wall clock has to queue again.
+# The synthetic campaign is ~1.4 h (327 runs plus validate.py and writing the slim copy on the
+# first job; `DRY_RUN=1 test/run_benchmark.sh` lists them). The real one has 336 runs and a
+# ~4x larger core input, so T1, T2 and T6 take roughly 3x longer: budget ~3-4 h. The margin
+# covers a slow Lustre day; a job that runs out of wall clock has to queue again.
+#
+#   sbatch test/slurm_benchmark.sbatch                              # ds_x1..ds_x32
+#   sbatch --export=ALL,DATASET=real test/slurm_benchmark.sbatch    # lists in $SCRATCH/bench/real
 
 set -euo pipefail
 
@@ -69,8 +73,14 @@ fi
 echo
 
 export PY="$(command -v python)"
-export DATA_DIR="${SCRATCH_BENCH}/data"
-export RESULTS="${SCRATCH_BENCH}/results-ares"
+export DATASET="${DATASET:-synthetic}"
+if [[ "$DATASET" == real ]]; then
+    export DATA_DIR="${SCRATCH_BENCH}/real"
+    export RESULTS="${SCRATCH_BENCH}/results-ares-real"
+else
+    export DATA_DIR="${SCRATCH_BENCH}/data"
+    export RESULTS="${SCRATCH_BENCH}/results-ares"
+fi
 export THREADS_LIST="1 2 4 8 12 16 24 32 48"
 export RUN_TIMEOUT=2400
 

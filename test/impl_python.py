@@ -112,7 +112,7 @@ def chain_python(df, chain_len, rp_id=bc.DEFAULT_RP_ID):
 
 # --- TEST 3: per-track efficiency ------------------------------------------------------------
 
-EFFICIENCY_COLUMNS = ["PPSLocalTrack_x", "PPSLocalTrack_y", "PPSLocalTrack_decRPId"]
+EFFICIENCY_COLUMNS = bc.EFFICIENCY_COLUMNS
 
 
 def _region_edges(arm_key, pot_type):

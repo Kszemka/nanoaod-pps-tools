@@ -29,12 +29,17 @@ import app.diamond_geometry as diamond_geometry
 try:
     import awkward as ak
     import uproot
+    from uproot.source.futures import TrivialExecutor
 except ImportError as exc:  # pragma: no cover - the cluster env has both
     raise SystemExit(
         "impl_uproot needs uproot and awkward: micromamba install -c conda-forge uproot awkward"
     ) from exc
 
-EFFICIENCY_COLUMNS = ["PPSLocalTrack_x", "PPSLocalTrack_y", "PPSLocalTrack_decRPId"]
+# uproot decompresses baskets on a thread pool sized to the machine by default: on Ares the
+# "single-threaded" uproot runs were measured at 434-501% CPU against 99% for every other
+# implementation. The executors are pinned to the calling thread so ImplicitMT stays the only
+# source of parallelism in the campaign.
+_SERIAL = TrivialExecutor()
 
 # Bytes read, accumulated across _read calls. The benchmark's own byte counter is
 # TFile::GetFileBytesRead, which only sees I/O that went through ROOT and therefore reports a
@@ -48,12 +53,20 @@ def bytes_read():
 
 
 def _read(path, columns, tree="Events"):
+    """Columns from one file or a .txt list of them, concatenated in list order."""
     global _bytes_read
-    with uproot.open(path) as handle:
-        arrays = handle[tree].arrays(columns, library="ak")
-        source = getattr(handle.file, "source", None)
-        _bytes_read += int(getattr(source, "num_requested_bytes", 0) or 0)
-        return arrays
+    parts = []
+    for file_path in bc.input_files(path):
+        with uproot.open(file_path) as handle:
+            parts.append(handle[tree].arrays(
+                columns,
+                library="ak",
+                decompression_executor=_SERIAL,
+                interpretation_executor=_SERIAL,
+            ))
+            source = getattr(handle.file, "source", None)
+            _bytes_read += int(getattr(source, "num_requested_bytes", 0) or 0)
+    return parts[0] if len(parts) == 1 else ak.concatenate(parts)
 
 
 # --- TEST 1: single filter -------------------------------------------------------------------
@@ -113,7 +126,7 @@ def efficiency_uproot(path, rp_id, arm_key, pot_type, correction_json):
     n_regions = diamond_geometry.POT_CONFIG[pot_type]["n_regions"]
     lut = np.array([corr.evaluate(i) for i in range(n_regions)], dtype=np.float64)
 
-    data = _read(path, EFFICIENCY_COLUMNS)
+    data = _read(path, bc.EFFICIENCY_COLUMNS)
     rps = data["PPSLocalTrack_decRPId"]
     data = data[ak.any(rps == rp_id, axis=1)]
 

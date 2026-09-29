@@ -28,7 +28,7 @@ from contextlib import contextmanager
 
 # Bumped whenever a field changes meaning rather than just being added. Records from different
 # versions must not be averaged together.
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 for path in (REPO_ROOT, os.path.join(REPO_ROOT, "corrections-examples")):
@@ -55,6 +55,7 @@ CHAIN_COLUMNS = {
     "xi": "Proton_singleRP_xi",
 }
 MAX_CHAIN_LEN = len(CHAIN_STEPS)
+EFFICIENCY_COLUMNS = ["PPSLocalTrack_x", "PPSLocalTrack_y", "PPSLocalTrack_decRPId"]
 ARM_LEFT_RPS = (23, 123)
 ARM_RIGHT_RPS = (3, 103)
 DIAMOND_RP_TYPE = 5
@@ -80,7 +81,8 @@ def chain_columns(chain_len):
 
 def build_parser(description, impls, modes=("vector", "loop")):
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--input", required=True, help="benchmark .root file")
+    parser.add_argument("--input", required=True,
+                        help="benchmark .root file, or a .txt list of them (one path per line)")
     parser.add_argument("--impl", required=True, choices=impls)
     parser.add_argument("--mode", default=modes[0], choices=modes,
                         help="python implementation only: numpy over the columns, or plain loops")
@@ -98,34 +100,98 @@ def setup_root(threads):
     return threads or 1
 
 
+def is_file_list(path):
+    return path.endswith(".txt")
+
+
+def input_files(path):
+    """
+    The .root files behind --input: the file itself, or the entries of a .txt list.
+
+    Relative entries resolve against the list's own directory, so a list written next to the
+    data stays valid wherever the data directory is mounted. Blank lines and # comments are
+    skipped.
+    """
+    if not is_file_list(path):
+        return [path]
+    base = os.path.dirname(os.path.abspath(path))
+    with open(path) as f:
+        entries = [line.strip() for line in f]
+    return [e if os.path.isabs(e) else os.path.join(base, e)
+            for e in entries if e and not e.startswith("#")]
+
+
 def warmup(args, build_and_trigger, tree="Events"):
     """
     Runs the same graph over a single entry so cling compiles the filter expressions and the
     efficiency kernel before the timed phase starts.
 
-    Every dataset is a Snapshot of examples/test.root, so the schema is identical and warming up
-    on the small source avoids opening a multi-GB file to process a single entry. Must run
-    before EnableImplicitMT: Range() is not supported under implicit multi-threading.
+    The ds_xN series are copies of examples/test.root, so for them the small source has the
+    same column types and the warmup does not touch the multi-GB input. Real-data lists warm
+    up on their own first file instead: a different CMSSW release can store a column with a
+    different type, and a kernel compiled for the wrong types would push the real compilation
+    back into the timed phases. Must run before EnableImplicitMT: Range() is not supported
+    under implicit multi-threading.
     """
-    source = WARMUP_INPUT if os.path.exists(WARMUP_INPUT) else args.input
+    if is_file_list(args.input):
+        source = input_files(args.input)[0]
+    else:
+        source = WARMUP_INPUT if os.path.exists(WARMUP_INPUT) else args.input
     build_and_trigger(ROOT.RDataFrame(tree, source).Range(1))
+
+
+def tree_layout(path, tree="Events"):
+    """
+    Entries, clusters, branches and file-level codec of one file, from metadata only.
+
+    Clusters are what ImplicitMT divides the work by, so they are reported wherever a dataset
+    is described. The codec matters as much: CMS production NanoAOD is commonly LZMA while the
+    ds_xN series is ZSTD, and decompression is most of the per-event cost. The algorithm is
+    ROOT's enum value (1 zlib, 2 LZMA, 4 LZ4, 5 ZSTD).
+    """
+    f = ROOT.TFile.Open(path)
+    if not f or f.IsZombie():
+        raise OSError(f"cannot open {path}")
+    t = f.Get(tree)
+    if not t:
+        f.Close()
+        raise OSError(f"no {tree} tree in {path}")
+    entries = int(t.GetEntries())
+    iterator = t.GetClusterIterator(0)
+    clusters = 0
+    while iterator.Next() < entries:
+        clusters += 1
+    layout = {
+        "entries": entries,
+        "clusters": clusters,
+        "branches": [b.GetName() for b in t.GetListOfBranches()],
+        "compression_algorithm": int(f.GetCompressionAlgorithm()),
+        "compression_level": int(f.GetCompressionLevel()),
+    }
+    f.Close()
+    return layout
 
 
 def count_events(args, tree="Events"):
     """
-    Entry count straight from the file's metadata.
+    Entry count straight from the files' metadata.
 
     A Count() action would be an entire event loop -- on a 14 M event file that was ~150 s per
     run, spent purely on bookkeeping and charged to the setup phase.
     """
-    f = ROOT.TFile.Open(args.input)
-    total = int(f.Get(tree).GetEntries())
-    f.Close()
+    total = 0
+    for path in input_files(args.input):
+        f = ROOT.TFile.Open(path)
+        total += int(f.Get(tree).GetEntries())
+        f.Close()
     return total
 
 
 def make_dataframe(args, tree="Events"):
-    return ROOT.RDataFrame(tree, args.input)
+    files = input_files(args.input)
+    if len(files) == 1:
+        return ROOT.RDataFrame(tree, files[0])
+    return ROOT.RDataFrame(tree, ROOT.std.vector["std::string"](files))
 
 
 def build_efficiency_json(arm_key, pot_type, out_dir="/tmp"):
@@ -228,10 +294,16 @@ class Bench:
             self._trace["phase"] = name
         bytes_before = ROOT.TFile.GetFileBytesRead()
         start = time.perf_counter()
+        # Process CPU time summed over all threads. GNU time's CPU% averages over the whole
+        # process, whose first ~5 s are single-threaded setup, so it cannot say how many cores
+        # the event loop itself kept busy.
+        cpu_start = time.process_time()
         yield
         elapsed = time.perf_counter() - start
+        cpu = time.process_time() - cpu_start
         read = int(ROOT.TFile.GetFileBytesRead() - bytes_before)
         self.record[f"wall_{name}"] = self.record.get(f"wall_{name}", 0.0) + elapsed
+        self.record[f"cpu_{name}"] = self.record.get(f"cpu_{name}", 0.0) + cpu
         self.record[f"bytes_{name}"] = self.record.get(f"bytes_{name}", 0) + read
         if self._trace is not None:
             self._trace["phase"] = f"after_{name}"
@@ -264,5 +336,7 @@ class Bench:
             self.record["events_per_s"] = n_events / loop
         if n_tracks and loop > 0:
             self.record["tracks_per_s"] = n_tracks / loop
+        if loop > 0 and "cpu_loop" in self.record:
+            self.record["cores_busy_loop"] = self.record["cpu_loop"] / loop
         print("BENCH " + json.dumps(self.record))
         return self.record
