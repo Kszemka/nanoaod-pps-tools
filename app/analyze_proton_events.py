@@ -419,6 +419,66 @@ def create_histograms_and_plots(df_with_pps, histogram_types=None, output_prefix
     return histograms
 
 
+def plot_filter_comparison(df_before, df_after, filter_label, column="PPSLocalTrack_x",
+                           title="PPS track X position", axis_title="X [mm]",
+                           bins=(100, -20, 20), output_prefix="pps_filter_comparison"):
+    """
+    Overlay one track variable before and after a selection, so the effect of the filters
+    is visible on the same axes.
+
+    Args:
+        df_before: RDataFrame before the selection (e.g. events with PPS tracks)
+        df_after: RDataFrame after the selection
+        filter_label: legend text describing the selection (TLatex syntax, e.g. "#xi")
+        column: branch to histogram (default: PPSLocalTrack_x)
+        title: plot title, suffixed with ": before and after filtering"
+        axis_title: x-axis title
+        bins: (n_bins, low, high)
+        output_prefix: prefix for the output PNG in data/
+
+    Returns:
+        Path to the output PNG
+    """
+    data_dir = "data"
+    if not os.path.exists(data_dir):
+        os.makedirs(data_dir)
+
+    # Booked together so the four results come out of two event loops, not four.
+    n_before, n_after = df_before.Count(), df_after.Count()
+    h_before = df_before.Histo1D(
+        (f"h_{output_prefix}_before", f"{title}: before and after filtering;{axis_title};Tracks", *bins),
+        column)
+    h_after = df_after.Histo1D((f"h_{output_prefix}_after", "", *bins), column)
+
+    c = ROOT.TCanvas(f"c_{output_prefix}", output_prefix, 800, 600)
+    c.SetLeftMargin(0.12)
+    h_before.SetStats(False)
+    h_after.SetStats(False)
+    h_before.SetLineColor(ROOT.kBlue + 1)
+    h_before.SetLineWidth(2)
+    h_after.SetLineColor(ROOT.kRed + 1)
+    h_after.SetLineWidth(2)
+    h_after.SetFillColorAlpha(ROOT.kRed + 1, 0.3)
+    h_before.GetYaxis().SetTitleOffset(1.4)
+    # Headroom for the legend above the peak.
+    h_before.SetMaximum(h_before.GetMaximum() * 1.25)
+    h_before.Draw("HIST")
+    h_after.Draw("HIST SAME")
+
+    legend = ROOT.TLegend(0.12, 0.72, 0.52, 0.88)
+    legend.SetBorderSize(0)
+    legend.SetFillStyle(0)
+    legend.SetTextSize(0.03)
+    legend.AddEntry(h_before.GetPtr(), f"before filtering ({n_before.GetValue():,} ev.)", "l")
+    legend.AddEntry(h_after.GetPtr(), f"{filter_label} ({n_after.GetValue():,} ev.)", "f")
+    legend.Draw()
+
+    output_png = os.path.join(data_dir, f"{output_prefix}.png")
+    c.SaveAs(output_png)
+    c.Close()  # prevent ROOT's Jupyter hook from also auto-displaying the live canvas
+    return output_png
+
+
 def plot_diamond_efficiency_maps(
     diamond_dfs, efficiency_data, run_number, arm_rp_ids, output_prefix=None, pot_type="box"
 ):

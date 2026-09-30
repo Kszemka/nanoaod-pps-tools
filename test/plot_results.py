@@ -19,8 +19,8 @@ import sys
 from collections import defaultdict
 
 CSV_FIELDS = [
-    "label", "status", "schema_version", "machine", "test", "impl", "mode", "threads",
-    "chain_len", "tag", "input", "n_events",
+    "label", "status", "schema_version", "machine", "storage", "cache", "test", "impl", "mode", "threads",
+    "chain_len", "tag", "input", "input_bytes", "n_events",
     "n_tracks", "wall_setup", "wall_warmup", "wall_jit", "wall_loop", "wall_fixed",
     "bytes_setup", "bytes_warmup", "bytes_jit", "bytes_loop", "bytes_total",
     "peak_rss_kb", "rss_baseline_kb",
@@ -54,13 +54,16 @@ def dedupe_labels(records):
     in the run that finished. Taking the median across all of them raises the single-thread
     baseline and inflates every speedup computed from it.
 
-    Last rather than first: the run that completed wrote the later records.
+    Last rather than first: the run that completed wrote the later records. Repeated warm-ups
+    are not counted as superseded: every job of a RESUME=1 campaign runs its own.
     """
     last_index = {}
     for index, record in enumerate(records):
         last_index[record.get("label")] = index
     keep = [r for i, r in enumerate(records) if last_index[r.get("label")] == i]
-    return keep, len(records) - len(keep)
+    superseded = [r for i, r in enumerate(records) if last_index[r.get("label")] != i
+                  and not str(r.get("label", "")).startswith("warmup_")]
+    return keep, len(superseded)
 
 
 def write_csv(records, results_dir):
@@ -267,6 +270,13 @@ def plot_core(ok, results_dir, plt, save, outputs):
     weak_slim = core_rows(ok, "weakslim")
     qstruct = core_rows(ok, "qstruct")
     impls = core_rows(ok, "impl")
+    sized = core_rows(ok, "size")
+    # The 1 TB campaign has no T5 of its own: its implementation comparison is the largest
+    # point of the size series, which is the same set of variants on one core.
+    impls_from_size = not impls and bool(sized)
+    if impls_from_size:
+        largest = max(r.get("input_bytes") or 0 for r in sized)
+        impls = [r for r in sized if (r.get("input_bytes") or 0) == largest]
     # uproot with its own thread pool is a separate point, not a repeat of the pinned one.
     for r in impls:
         if r.get("tag") == "own-threads":
@@ -297,7 +307,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
     # T5's RDataFrame runs are the same configuration as T1's t0 runs. A gap between the two is
     # a property of when T5 ran, not of the implementation.
     rdf_impl = {"filter": "rdf", "chain": "rdf-lazy", "efficiency": "jit"}
-    for test, impl in rdf_impl.items():
+    for test, impl in ({} if impls_from_size else rdf_impl).items():
         t5 = [r["wall_loop"] for r in impls if r.get("test") == test and r.get("impl") == impl]
         t0 = serial_loop([r for r in strong_all if r.get("impl") == impl], test)
         if t5 and t0:
@@ -320,7 +330,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
         ax.set_yscale("log", base=2)
         ax.set_yticks(marks)
         ax.set_yticklabels([str(t) for t in marks])
-        ax.set_ylabel("speedup vs 1 thread")
+        ax.set_ylabel(r"speedup $S(n) = T(1)\,/\,T(n)$")
 
     # (1) Strong scaling: the same events, more threads. Amdahl applies here and only
     # here. It is drawn not because it fits but because it cannot -- monotonic in n for any
@@ -361,7 +371,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
 
         thread_axis(ax)
         speedup_axis(ax, ticks)
-        ax.set_title("T1 strong scaling: fixed problem size, more threads")
+        ax.set_title("Strong scaling: fixed problem size, more threads")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3, which="both")
         save(fig, "01_speedup_amdahl.png")
@@ -379,7 +389,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
         thread_axis(ax)
         ax.set_ylabel("parallel efficiency [%]")
         ax.set_ylim(0, 105)
-        ax.set_title("T1 parallel efficiency: speedup per thread paid for")
+        ax.set_title("Parallel efficiency: speedup per thread")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3, which="both")
         save(fig, "02_parallel_efficiency.png")
@@ -401,7 +411,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
         fig, (ax_t, ax_s) = plt.subplots(1, 2, figsize=(12, 4.8))
         for test, pretty in CORE_TEST_LABEL.items():
             colour = CORE_TEST_COLOUR[test]
-            for rows_set, style, suffix in ((weak, "-", ""), (weak_slim, "--", ", slim")):
+            for rows_set, style, suffix in ((weak, "-", ""), (weak_slim, "--", ", control file")):
                 sub = [r for r in rows_set if r.get("test") == test]
                 xs, ys = curve(sub, "threads", "wall_loop")
                 if len(xs) < 2:
@@ -431,7 +441,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
         ax_t.set_title("Constant work per thread: flat is ideal")
         speedup_axis(ax_s, weak_ticks)
         ax_s.set_ylabel("scaled speedup")
-        ax_s.set_title("T2 scaled speedup" + (" (dashed: T2S, slim)" if weak_slim else ""))
+        ax_s.set_title("Scaled speedup" + (" (dashed: control files)" if weak_slim else ""))
         save(fig, "03_weak_scaling.png")
 
     # (4) What the speedup curve cannot show. Every worker gets its own TTreeCache and its own
@@ -446,7 +456,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
                             pretty, color=CORE_TEST_COLOUR[test])
         thread_axis(ax)
         ax.set_ylabel("peak RSS [MB]")
-        ax.set_title("T3 memory against thread count (fixed problem size)")
+        ax.set_title("Memory against thread count (fixed problem size)")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3, which="both")
         save(fig, "04_rss_vs_threads.png")
@@ -464,7 +474,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
         ax.set_xscale("log")
         ax.set_xlabel("events (growing with the thread count)")
         ax.set_ylabel("peak RSS [MB]")
-        ax.set_title("T3 memory along the weak-scaling series")
+        ax.set_title("Memory along the weak-scaling series")
         ax.legend(fontsize=8)
         ax.grid(alpha=0.3, which="both")
         save(fig, "05_rss_vs_size.png")
@@ -490,7 +500,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
         ax_loops.set_ylabel("event loops over the dataset")
         ax_loops.set_title("Counted, not measured")
         ax_time.set_ylabel("event-loop wall time [s]")
-        ax_time.set_title("T4 ...and what it costs")
+        ax_time.set_title("...and what it costs")
         save(fig, "07_query_structure.png")
 
     # (8) Implementations, and where their time goes. Same file, same codec, same events for
@@ -498,62 +508,74 @@ def plot_core(ok, results_dir, plt, save, outputs):
     # not straddle two datasets.
     #
     # Events/s rather than tracks/s: only the efficiency test reports a track count, and a
-    # figure keyed on it silently dropped the filter and chain rows. The cores busy in the loop
-    # next to each bar are there so that a bar which is fast because it used more cores cannot
-    # pass for one that is fast per core.
-    impl_tests = [t for t in CORE_TEST_LABEL if any(r.get("test") == t for r in impls)]
+    # figure keyed on it silently dropped the filter and chain rows.
+    # Only single-core runs: uproot with its own thread pool is a different resource budget and
+    # does not belong on a per-core comparison. Python is represented by its faster, loop mode:
+    # the vector mode still loops over per-event objects to flatten them and only adds copies.
+    # correctionlib is part of the RDataFrame solution, not a competing implementation.
+    one_core = [r for r in impls if r.get("tag") != "own-threads"
+                and r.get("impl") != "correctionlib"
+                and not (r.get("impl") == "python" and r.get("mode") == "vector")]
+    impl_tests = [t for t in CORE_TEST_LABEL if any(r.get("test") == t for r in one_core)]
     if impl_tests:
         def impl_name(key):
-            impl, mode = key
-            return f"python/{mode}" if impl == "python" and mode in ("vector", "loop") else impl
+            impl, _ = key
+            if impl in ("rdf", "rdf-lazy", "jit"):
+                return "RDataFrame"
+            return impl
 
         per_test = {}
         for test in impl_tests:
-            sub = [r for r in impls if r.get("test") == test]
+            sub = [r for r in one_core if r.get("test") == test]
             values = aggregate(sub, ("impl", "mode"), "events_per_s")
             per_test[test] = (sub, values, sorted(values, key=lambda k: values[k][0]))
         heights = [max(len(per_test[t][2]), 1) for t in impl_tests]
         fig, axes = plt.subplots(len(impl_tests), 2, figsize=(13, 1.4 + 0.5 * sum(heights)),
                                  gridspec_kw={"height_ratios": heights}, squeeze=False)
-        phase_names = ("wall_setup", "wall_warmup", "wall_jit", "wall_loop")
-        phase_colours = ("#4575b4", "#fdae61", "#1a9850", "#d73027")
+        # The warmup pass is where cling compiles the kernel, so together with graph building it
+        # is RDataFrame's compilation cost -- the one-off price uproot and NumPy do not pay.
+        for r in one_core:
+            r["wall_compile"] = (r.get("wall_warmup") or 0.0) + (r.get("wall_jit") or 0.0)
+        phase_names = ("wall_setup", "wall_compile", "wall_loop")
+        phase_labels = ("setup", "JIT compilation", "event loop")
+        phase_colours = ("#4575b4", "#1a9850", "#d73027")
         for row, test in enumerate(impl_tests):
             sub, values, keys = per_test[test]
             ax_tp, ax_ph = axes[row]
             names = [impl_name(k) for k in keys]
             rates = [values[k][0] for k in keys]
-            busy = aggregate(sub, ("impl", "mode"), "cores_busy")
-            pinned = {(r.get("impl"), r.get("mode")) for r in sub
-                      if r.get("pinned_core") is not None}
             ax_tp.barh(names, rates, color=CORE_TEST_COLOUR[test])
-            for index, key in enumerate(keys):
-                if key in busy:
-                    note = ", pinned" if key in pinned else ""
-                    ax_tp.text(rates[index], index, f"  {busy[key][0]:.2f} cores{note}",
-                               va="center", fontsize=7)
             ax_tp.set_xscale("log")
-            ax_tp.set_xlim(right=max(rates) * 6)
+            ax_tp.set_xlim(right=max(rates) * 1.5)
+            ax_tp.xaxis.set_minor_formatter(plt.NullFormatter())
             ax_tp.set_ylabel(CORE_TEST_LABEL[test])
             ax_tp.grid(alpha=0.3, axis="x")
 
             phases = {name: aggregate(sub, ("impl", "mode"), name) for name in phase_names}
             lefts = [0.0] * len(keys)
-            for name, colour in zip(phase_names, phase_colours):
+            for name, label, colour in zip(phase_names, phase_labels, phase_colours):
                 widths = [phases[name].get(k, (0.0,))[0] or 0.0 for k in keys]
                 ax_ph.barh(names, widths, left=lefts, color=colour,
-                           label=name[5:] if row == 0 else None)
+                           label=label if row == 0 else None)
                 lefts = [a + b for a, b in zip(lefts, widths)]
-            # A log axis starting at the first tick hid every phase shorter than ~0.8 s, which
-            # is uproot's entire setup.
-            ax_ph.set_xscale("log")
-            ax_ph.set_xlim(left=0.05)
+            # Linear, because on a log axis stacked segments are not proportional to time: the
+            # ~1 s setup took as much width as a 20 s loop. The scale follows the compiled
+            # implementations; the interpreted ones run off it and are labelled with their total.
+            compiled = [t for n, t in zip(names, lefts) if not n.startswith("python")]
+            right = max(compiled or lefts) * 1.6
+            ax_ph.set_xlim(0, right)
+            for index, total in enumerate(lefts):
+                label = f"{total:.1f} s" if total <= right else f"{total:.0f} s \u2192"
+                ax_ph.text(min(total, right * 0.985), index, f"  {label}" if total <= right
+                           else label, va="center", fontsize=7,
+                           ha="left" if total <= right else "right",
+                           color="black" if total <= right else "white")
             ax_ph.grid(alpha=0.3, axis="x")
         impl_input = impls[0].get("input", "one input")
-        axes[0][0].set_title(f"T5 throughput on {impl_input}, ImplicitMT off"
-                             + (", one core" if any(r.get("pinned_core") is not None
-                                                    for r in impls) else ""))
-        axes[0][1].set_title("Fixed cost against the event loop")
-        axes[0][1].legend(fontsize=8, loc="lower right")
+        axes[0][0].set_title(f"Event-loop throughput on {impl_input}, one core")
+        axes[0][1].set_title("Wall time per query")
+        axes[-1][1].legend(*axes[0][1].get_legend_handles_labels(), fontsize=8,
+                           loc="upper center", bbox_to_anchor=(0.5, -0.45), ncol=3)
         axes[-1][0].set_xlabel("events / s")
         axes[-1][1].set_xlabel("wall time [s]")
         save(fig, "08_implementations.png")
@@ -581,14 +603,14 @@ def plot_core(ok, results_dir, plt, save, outputs):
         thread_axis(ax)
         speedup_axis(ax, ticks)
         ax.set_ylabel("speedup")
-        ax.set_title("T1 speedup against both serial baselines")
+        ax.set_title("Speedup against both serial baselines")
         ax.legend(fontsize=7)
         ax.grid(alpha=0.3, which="both")
         save(fig, "09_speedup_baselines.png")
 
     # (10) How many cores the event loop actually kept busy. The answer to "why does ImplicitMT
     # look single-threaded": whole-process CPU% averages the loop with ~5 s of serial setup.
-    busy_sets = [(strong, "-", "")] + ([(slim, "--", ", slim")] if slim else [])
+    busy_sets = [(strong, "-", "")] + ([(slim, "--", ", control file")] if slim else [])
     if any(r.get("cores_busy") is not None for r in strong):
         fig, ax = plt.subplots(figsize=(8.5, 5.2))
         for test, pretty in CORE_TEST_LABEL.items():
@@ -617,7 +639,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
         for test, pretty in CORE_TEST_LABEL.items():
             colour = CORE_TEST_COLOUR[test]
             for rows_set, rows_all, style, name in ((strong, strong_all, "-", "full schema"),
-                                                   (slim, slim_all, "--", "slim")):
+                                                   (slim, slim_all, "--", "control file")):
                 sub = [r for r in rows_set if r.get("test") == test]
                 if not sub:
                     continue
@@ -643,11 +665,74 @@ def plot_core(ok, results_dir, plt, save, outputs):
         ax_s.set_ylabel("speedup vs ImplicitMT off, same file")
         ax_t.set_ylabel("event-loop wall time [s]")
         ax_m.set_ylabel("peak RSS [MB]")
-        ax_t.set_title("T6 loop time")
-        ax_s.set_title("T6 speedup")
-        ax_m.set_title("T6 memory")
+        ax_t.set_title("Event-loop time")
+        ax_s.set_title("Speedup")
+        ax_m.set_title("Peak memory")
         ax_m.legend(fontsize=7)
         save(fig, "11_file_width.png")
+
+    # (13) T5 against input size, from the size and sizepy series of the 1 TB campaign.
+    if sized:
+        plot_input_size(sized, plt, save)
+
+
+SIZE_IMPL_LABEL = {"rdf": "RDataFrame", "rdf-lazy": "RDataFrame", "jit": "RDataFrame",
+                   "uproot": "uproot", "python": "Python (AsNumpy)"}
+SIZE_IMPL_COLOUR = {"RDataFrame": "#1b7837", "uproot": "#762a83", "Python (AsNumpy)": "#e08214"}
+
+
+def plot_input_size(records, plt, save):
+    """
+    Peak memory and total time against input size, per implementation, on one core.
+
+    Total rather than loop time, because the loop alone hides the cost RDataFrame pays and the
+    others do not: setup plus cling JIT, once per process. Failed runs have no record here, so a
+    line that stops short is where that implementation ran out of memory or time.
+    """
+    fig, axes = plt.subplots(2, len(CORE_TEST_LABEL), figsize=(15, 8), squeeze=False)
+    for column, (test, pretty) in enumerate(CORE_TEST_LABEL.items()):
+        by_impl = defaultdict(list)
+        for r in records:
+            if r.get("test") != test or not r.get("input_bytes"):
+                continue
+            rss_kb = r.get("time_maxrss_kb") or r.get("peak_rss_kb")
+            r["input_gb"] = r["input_bytes"] / 1e9
+            r["rss_gb"] = rss_kb * 1024 / 1e9 if rss_kb else None
+            r["wall_total"] = (r.get("wall_fixed") or 0.0) + (r.get("wall_loop") or 0.0)
+            by_impl[SIZE_IMPL_LABEL.get(r.get("impl"), r.get("impl"))].append(r)
+
+        totals = {}
+        for name, rows in sorted(by_impl.items()):
+            xs_m, rss = curve(rows, "input_gb", "rss_gb")
+            xs_t, total = curve(rows, "input_gb", "wall_total")
+            colour = SIZE_IMPL_COLOUR.get(name)
+            axes[0][column].plot(xs_m, rss, marker="o", lw=2, color=colour, label=name)
+            axes[1][column].plot(xs_t, total, marker="o", lw=2, color=colour, label=name)
+            totals[name] = dict(zip(xs_t, total))
+            if len(xs_m) > 1 and len(xs_t) > 1:
+                print(f"  size {test} [{name}]: {fit_linear(xs_m, rss)[1]:.3f} GB of RSS and "
+                      f"{fit_linear(xs_t, total)[1]:.2f} s per GB of input, "
+                      f"measured up to {max(xs_t):.0f} GB")
+
+        rdf, up = totals.get("RDataFrame", {}), totals.get("uproot", {})
+        common = sorted(set(rdf) & set(up))
+        if common:
+            faster = [gb for gb in common if rdf[gb] < up[gb]]
+            print(f"  size {test}: RDataFrame faster than uproot in total from {faster[0]:.0f} GB"
+                  if faster else
+                  f"  size {test}: uproot faster than RDataFrame in total up to {common[-1]:.0f} GB")
+
+        axes[0][column].set_title(pretty)
+        axes[1][column].set_xlabel("input size on disk [GB]")
+        for ax in (axes[0][column], axes[1][column]):
+            ax.set_xlim(left=0)
+            ax.set_ylim(bottom=0)
+            ax.grid(alpha=0.3)
+    axes[0][0].set_ylabel("peak RSS [GB]")
+    axes[1][0].set_ylabel("total time: setup + JIT + event loop [s]")
+    axes[0][0].legend(fontsize=8)
+    fig.suptitle("Memory and time against input size, one core")
+    save(fig, "13_input_size.png")
 
 
 def plot(records, results_dir):
@@ -858,6 +943,101 @@ def scalability_rows(records, test, baseline=None):
     return rows
 
 
+def latex_escape(text):
+    return str(text).replace("\\", r"\textbackslash{}").replace("_", r"\_").replace("%", r"\%")
+
+
+def scalability_table(records, test):
+    """
+    The thesis's scalability table (tab:scalability) for one benchmark of the strong sweep.
+
+    Same definitions as the hand-written original, so a new campaign drops in unchanged: time is
+    the event-loop wall time under ImplicitMT(n), speedup and efficiency are against
+    ImplicitMT(1), throughput is events over that loop time, and CPU is GNU time's whole-process
+    figure, which the caption compares with the nominal 100n%. Returns None when the sweep has
+    no records for this test.
+    """
+    rows = scalability_rows(records, test)
+    if not rows:
+        return None
+    ok = [r for r in records if r.get("status") == "ok" and r.get("test") == test]
+    n_events = median([r["n_events"] for r in ok if r.get("n_events")])
+    cpu = {key[0]: value[0] for key, value in aggregate(ok, ("threads",), "cpu_percent").items()}
+    best = max(rows, key=lambda row: row["speedup"])
+    inputs = sorted({r.get("input") for r in ok if r.get("input")})
+    machines = sorted({r.get("machine") for r in ok if r.get("machine")})
+    repeats = max(aggregate(ok, ("threads",), "wall_loop").values(), key=lambda v: v[3])[3]
+    cold = any(r.get("cache") == "cold" for r in ok)
+
+    def bold(row, text):
+        return rf"\textbf{{{text}}}" if row is best else text
+
+    body = []
+    for row in rows:
+        seconds, threads = row["seconds"], row["threads"]
+        throughput = n_events / seconds / 1e6 if n_events else None
+        cpu_text = f"{cpu[threads]:.0f}\\%" if cpu.get(threads) is not None else "--"
+        body.append(" & ".join([
+            f"{threads:>2}",
+            bold(row, f"{seconds:.2f}"),
+            bold(row, f"{throughput:.2f}") if throughput is not None else "--",
+            bold(row, f"{row['speedup']:.2f}"),
+            f"{row['efficiency'] * 100:.0f}\\%",
+            cpu_text,
+        ]) + r" \\")
+
+    source = ", ".join(latex_escape(name) for name in inputs) or "the core input"
+    where = (f"measured on {latex_escape(machines[0].capitalize())}" if len(machines) == 1
+             else "measured")
+    if not n_events:
+        events = "the core input"
+    elif n_events >= 1e9:
+        events = f"${n_events / 1e9:.2f}$ billion events"
+    else:
+        events = f"${n_events / 1e6:.1f}$ million events"
+    median_note = f"median of {repeats} repeats, " if repeats > 1 else "single run, "
+    cache_note = "inputs evicted from the page cache before every run, " if cold else ""
+    caption = (
+        f"Parallel scalability metrics for the {CORE_TEST_LABEL[test].replace('5-', 'five-')} "
+        f"on {events} (\\texttt{{{source}}}), {where} "
+        f"({median_note}{cache_note}speedup against \\texttt{{ImplicitMT}} with one thread). "
+        f"Nominal CPU utilisation for $n$ threads is $100n\\%$, so the final column shows how "
+        f"far below saturation the execution remains. The speedup maximum at "
+        f"{best['threads']} threads coincides with a parallel efficiency of only "
+        f"${best['efficiency'] * 100:.0f}\\%$."
+    )
+    return "\n".join([
+        r"\begin{table}[htbp]",
+        r"\centering",
+        rf"\caption{{{caption}}}",
+        rf"\label{{tab:scalability-{test}}}",
+        r"\begin{tabular}{rrrrrr}",
+        r"\toprule",
+        r"Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & CPU \\",
+        r"\midrule",
+        *body,
+        r"\bottomrule",
+        r"\end{tabular}",
+        r"\end{table}",
+        "",
+    ])
+
+
+def write_scalability_tables(records, results_dir):
+    """table_scalability_<test>.tex for every benchmark of the strong sweep that has records."""
+    strong = core_rows(records, "strong")
+    paths = []
+    for test in CORE_TEST_LABEL:
+        table = scalability_table(strong, test)
+        if table is None:
+            continue
+        path = os.path.join(results_dir, f"table_scalability_{test}.tex")
+        with open(path, "w") as f:
+            f.write(table)
+        paths.append(path)
+    return paths
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--results", default=os.path.join(os.path.dirname(os.path.abspath(__file__)), "results"))
@@ -880,6 +1060,8 @@ def main():
         print(f"NOTE: {len(failed)} runs failed or timed out: "
               f"{', '.join(sorted(r['label'] for r in failed)[:10])}")
 
+    for path in write_scalability_tables(records, args.results):
+        print(f"  {path}")
     if not args.csv_only:
         for path in plot(records, args.results):
             print(f"  {path}")

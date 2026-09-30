@@ -2,8 +2,8 @@
 
 Jedna ścieżka: `slurm_benchmark.sbatch` → `run_all.sh` → `validate.py` + `run_benchmark.sh`
 → `plot_results.py`. Te same eksperymenty idą na dwóch zbiorach: syntetycznej serii
-`ds_x1`–`ds_x32` (`DATASET=synthetic`, domyślnie) i prawdziwych plikach NanoAOD z Tier0
-(`DATASET=real`).
+`ds_x1`–`ds_x32` (`DATASET=synthetic`, domyślnie), prawdziwych plikach NanoAOD z Tier0
+(`DATASET=real`) i na ~1 TB kopii `ds_x32.root` (`DATASET=big`, sekcja „Kampania na ~1 TB”).
 
 | plik | rola |
 |---|---|
@@ -11,6 +11,7 @@ Jedna ścieżka: `slurm_benchmark.sbatch` → `run_all.sh` → `validate.py` + `
 | `validate.py` | zgodność wszystkich implementacji, geometria C++ vs Python, 1 vs N wątków |
 | `run_benchmark.sh` | kampania T1/T2/T4/T5/T6/T2S, zbiera `raw.jsonl`, na końcu rysuje wykresy |
 | `make_slim.py` | kopia wejścia T1 z samymi 6 używanymi kolumnami (plik albo lista) dla T6 |
+| `make_bigset.sh` | tylko kopiuje: `ds_1.root` … `ds_96.root` obok `ds_x32.root`, czyli wejście `DATASET=big` |
 | `inventory_files.py` | CSV z opisem plików: zdarzenia, klastry, schemat, kodek, obecność PPS; sprawdza transfer |
 | `make_filelists.py` | z inwentaryzacji buduje listy `core.txt`, `weak_N.txt`, `impl.txt` dla `DATASET=real` |
 | `bench_filter.py`, `bench_chain.py`, `bench_efficiency.py` | pojedynczy pomiar (TEST 1–3) |
@@ -26,12 +27,16 @@ Każde wejście benchmarku (`--input`) to plik `.root` albo lista `.txt` (jedna 
 ścieżki względne liczone od katalogu listy). `run_benchmark.sh` przed startem sprawdza, że
 istnieje każde wejście i każdy plik z każdej listy.
 
-| rola | `DATASET=synthetic` | `DATASET=real` |
-|---|---|---|
-| T1 (`DS_CORE`) | `ds_x32.root` | `core.txt` |
-| T2 (`WEAK_PATTERN`) | `ds_x%s.root`, N = 1…32 | `weak_%s.txt`, N = 1…48 |
-| T4, T5 (`DS_IMPL`) | `ds_x32.root` | `impl.txt` (~11 mln zdarzeń) |
-| T6 (`DS_SLIM`) | `ds_x32_slim.root` | `core_slim.txt` + `slim/` |
+| rola | `DATASET=synthetic` | `DATASET=real` | `DATASET=big` |
+|---|---|---|---|
+| T1 (`DS_CORE`) | `ds_x32.root` | `core.txt` | `lists/core.txt` (96 kopii, ~1 TB) |
+| T2 (`WEAK_PATTERN`) | `ds_x%s.root`, N = 1…32 | `weak_%s.txt`, N = 1…48 | `lists/weak_%s.txt`, 2N kopii |
+| T4, T5 (`DS_IMPL`) | `ds_x32.root` | `impl.txt` (~11 mln zdarzeń) | `lists/impl.txt` (9 kopii, ~98 GB); T5 nie biegnie |
+| `size`, `sizepy` (`SIZE_PATTERN`) | — | — | `lists/size_%s.txt`, N = 1, 2, 4, 6, 8, 9 kopii |
+
+Przy `DATASET=big` listy w `$DATA_DIR/lists/` pisze sam `run_benchmark.sh` na starcie kampanii,
+z pierwszych N plików `ds_1.root`, `ds_2.root`, … (wpisy `../ds_N.root`).
+| T6 (`DS_SLIM`) | `ds_x32_slim.root` | `core_slim.txt` + `slim/` | domyślnie nie jest mierzony |
 
 ### Syntetyczne: `ds_xN`
 
@@ -248,6 +253,8 @@ Seria syntetyczna w `$SCRATCH/bench/data`, listy prawdziwych danych w `$SCRATCH/
 ```bash
 DRY_RUN=1 DATA_DIR=$SCRATCH/bench/data ./test/run_benchmark.sh | tail -1                 # 406
 DRY_RUN=1 DATASET=real DATA_DIR=$SCRATCH/bench/real ./test/run_benchmark.sh | tail -1    # 424
+DRY_RUN=1 DATASET=big  DATA_DIR=$SCRATCH/bench/data ./test/run_benchmark.sh | tail -1    # 99
+DRY_RUN=1 DATASET=big TESTS=sizepy DATA_DIR=$SCRATCH/bench/data ./test/run_benchmark.sh | tail -1   # 21
 sbatch test/slurm_benchmark.sbatch                              # -> results-ares
 sbatch --export=ALL,DATASET=real test/slurm_benchmark.sbatch    # -> results-ares-real
 ```
@@ -258,7 +265,111 @@ Kopie slim (`ds_x32_slim.root` i `ds_xN_slim.root` albo `core_slim.txt`, `weak_N
 `slurm_benchmark.sbatch` bierze cały węzeł (`--exclusive`, `--mem=0`, `--hint=nomultithread`),
 wypisuje `lscpu`/`nproc` i przerywa, jeśli widzi mniej CPU niż zamówił. Nie używa `srun`: od
 Slurm 22.05 krok zadania nie dziedziczy `--cpus-per-task`, co po cichu spłaszcza krzywą
-przyspieszenia. Istniejący katalog wyników jest przenoszony do `results-ares-archived-<data>`.
+przyspieszenia. Istniejący katalog wyników jest przenoszony do `results-ares-archived-<data>`,
+chyba że zadanie ma `RESUME=1`: wtedy dopisuje do niego i pomija etykiety, które w `raw.jsonl`
+mają już `"status": "ok"`. Tak wznawia się zadanie, któremu skończył się `--time`. Biegi `failed`
+są powtarzane, a `warmup_*` idą zawsze.
+
+### Wejścia w RAM-ie (MEMFS)
+
+```bash
+sbatch -C memfs --export=ALL,STORAGE=memfs test/slurm_benchmark.sbatch                  # -> results-ares-memfs
+sbatch -C memfs --export=ALL,DATASET=real,STORAGE=memfs test/slurm_benchmark.sbatch     # -> results-ares-real-memfs
+```
+
+`-C memfs` tworzy dla zadania dysk w RAM-ie pod `$MEMFS` (maks. 120 GB, wlicza się do `--mem`).
+Z `STORAGE=memfs` skrypt kopiuje cały `DATA_DIR` do `$MEMFS/data` przed kampanią i dopiero
+potem uruchamia te same biegi, więc żaden bieg nie czyta z Lustre. Różnica względem zwykłej
+kampanii to koszt współdzielonego systemu plików. Skrypt przerywa, jeśli `$MEMFS` nie istnieje,
+dane się nie mieszczą albo lista `.txt` ma ścieżkę bezwzględną (wskazywałaby dalej na Lustre).
+Wyniki idą na scratch, nie do MEMFS. Każdy rekord ma pole `storage` (`lustre`/`memfs`).
+Kopie slim muszą już istnieć, czyli najpierw puść zwykłą kampanię; inaczej `make_slim.py`
+zapisze je w MEMFS i znikną razem z zadaniem.
+
+### Kampania na ~1 TB (`DATASET=big`)
+
+Najpierw jednorazowo kopie, na węźle logowania w `tmux`/`screen` (kilkanaście minut do godziny):
+
+```bash
+hpc-fs                                                            # potrzeba ~1.04 TB
+bash test/make_bigset.sh --source $SCRATCH/bench/data/ds_x32.root # -> data/ds_1.root ... ds_96.root
+```
+
+Potem dwa zadania, oba do `results-ares-big`:
+
+```bash
+# A: ~3.5 h, 99 biegów -- T1 i T2 do 1 TB, T4 na ~100 GB, seria rozmiarów dla RDF i uproot
+sbatch --time=06:00:00 --export=ALL,DATASET=big test/slurm_benchmark.sbatch
+# B: ~9 h, 21 biegów -- ta sama seria dla Pythona, dopisana do wyników A
+sbatch --time=12:00:00 --dependency=afterany:<id zadania A> \
+    --export=ALL,DATASET=big,TESTS=sizepy,RESUME=1 test/slurm_benchmark.sbatch
+```
+
+`afterany` uruchamia B, gdy A się skończy, niezależnie od tego, jak się skończyło. Nie puszczaj
+obu naraz: dopisywałyby do tego samego `raw.jsonl` i dzieliły Lustre, a to psuje zimne odczyty.
+
+Wejście to 96 zwykłych kopii `ds_x32.root` (96 × 10.84 GB, ~1.04 TB, 1.065 mld zdarzeń), czyli
+`ds_1.root` … `ds_96.root` w tym samym `data/`. `make_bigset.sh` tylko kopiuje: 8 strumieni `cp`,
+przez nazwy `.partial`, z pominięciem kopii, które już są w dobrym rozmiarze, więc przerwane
+kopiowanie wystarczy powtórzyć. Na końcu sprawdza, że wszystkie 96 ma pełny rozmiar. `df`
+sprawdza wolne miejsce, ale limit grantu pokazuje tylko `hpc-fs`. Listy nad kopiami
+(`lists/core.txt` = 96, `lists/weak_N.txt` = 2N, `lists/impl.txt` = 9, `lists/size_N.txt` = N
+pierwszych kopii) pisze sam `run_benchmark.sh` na starcie każdego zadania. Jeśli kopii brakuje,
+zadanie kończy się od razu z poleceniem, które je zrobi.
+
+Nie `hadd`: scalanie 1 TB w jeden plik to godziny, a wynikowy plik ma inne granice klastrów niż
+źródło, czyli zmienia to, po czym `ImplicitMT` dzieli pracę. `cp` zachowuje i klastry, i kodek.
+
+**Dlaczego kopie, a nie jeden plik wpisany 96 razy na listę.** Kopia to osobny inode. Jeden plik
+byłby przeczytany raz z Lustre i 95 razy z page cache, czyli kampania mierzyłaby cache. Przy
+kopiach `COLD=1` (domyślne dla `big`) przed każdym biegiem wyrzuca strony wejścia z cache przez
+`posix_fadvise(POSIX_FADV_DONTNEED)` — bez roota i tylko na plikach wejściowych, więc biblioteki
+ROOT-a zostają ciepłe. Każdy bieg czyta wszystko z Lustre, dokładnie jak przy 96 różnych
+plikach. Zawartość jest identyczna, więc wyniki dalej da się sprawdzić: zdarzeń ma być 96×,
+a checksumy wszystkich biegów muszą się zgadzać. Rekord ma pole `cache` (`warm`/`cold`).
+
+Zamiast rozgrzewania przez `cat` (przeczytałoby 1 TB na darmo) jest samosprawdzenie: skrypt
+wyrzuca strony pierwszej kopii i pyta `fincore`, ile zostało. Jeśli zostały, przerywa, bo inaczej
+każdy „zimny” pomiar byłby ciepły. `fincore` to util-linux ≥ 2.31; jak go nie ma, leci tylko
+ostrzeżenie. Trzy odrzucane biegi `warmup_*` idą wtedy na jednej kopii — są po biblioteki i PCH,
+nie po dane, więc trwają sekundy. MEMFS tu nie pomoże: ma 120 GB, więc 1 TB się nie zmieści (skrypt to odrzuci), a do
+tego zabierałby RAM ścieżkom Python i uproot i dawałby odczyt najcieplejszy z możliwych.
+
+Domyślnie 1 powtórzenie (`REPEATS_*=1`), bo samo skalowanie silne to tu ~2 h, więc na wykresach
+nie będzie wąsów.
+
+**Co się mierzy.** Tylko to, czego `ds_x32` nie mógł pokazać. `TESTS` wybiera eksperymenty;
+dla `big` domyślnie `TESTS="strong weak qstruct size"` (zadanie A), a zadanie B to
+`TESTS=sizepy`. Każde zaczyna się od 3 rozgrzewek.
+
+| `TESTS` | test | wejście | biegów | ~czas | zadanie |
+|---|---|---|---:|---:|---|
+| `strong` | T1 skalowanie silne, wątki off, 1–48 | 96 kopii, ~1 TB | 30 | 2.2 h | A |
+| `weak` | T2 skalowanie słabe, N wątków | 2N kopii, do ~1 TB | 21 | 0.5 h | A |
+| `qstruct` | T4 lazy / eager / `Report()` × 1, 3, 5, jeden wątek | `lists/impl.txt`, ~98 GB | 9 | 15 min | A |
+| `size` | T5 względem rozmiaru: RDF i uproot, jeden rdzeń | 1–9 kopii, ~11–98 GB | 36 | 30 min | A |
+| `sizepy` | T5 względem rozmiaru: Python, jeden rdzeń | 1–9 kopii, ~11–98 GB | 18 | 9 h | B |
+| `impl`, `slim`, `weakslim` | T5 na jednym wejściu, T6, T2S | — | — | — | pominięte |
+
+T4 biegnie na ~100 GB, a nie na 1 TB, bo `rdf-eager` czyta wejście do 6 razy. T5 jest tu serią
+rozmiarów, bo Python i uproot trzymają całe kolumny w pamięci i na 1 TB by padły. T6 i T2S nie
+zależą od rozmiaru wejścia. Serie `size` i `sizepy` mają te same warianty co wykres 08: filtr
+`rdf`, `uproot`, `python --mode loop`; łańcuch `rdf-lazy`, `uproot`, `python`; efektywność
+`jit`, `uproot`, `python --mode loop`. Etykiety to `r1_size_<test>_<impl>_c<N>`, gdzie N to
+liczba kopii.
+
+**Python osobno i na końcu.** Łańcuch w Pythonie to ~16 min i ~16.6 GB RSS na kopię, więc na
+8–9 kopiach potrzebuje ~133–150 GB z ~184 GB węzła. `sizepy` biegnie od najmniejszego rozmiaru,
+najpierw filtr i efektywność, a łańcuch na samym końcu. Jeśli zabraknie pamięci, jądro zabija
+tylko ten jeden proces. `run_one` zapisuje go jako `"status": "failed"` (kod 137) i kampania idzie
+dalej, a wszystko wcześniej jest już w `raw.jsonl`. Wariant, który padł na N kopiach, nie jest
+uruchamiany na większych: dostają rekord `failed` z `skipped_after` = N, bo i tak by padły po
+nawet ~2 h czytania. Slurm może pokazać stan `OUT_OF_MEMORY`, ale wyniki zostają.
+`RUN_TIMEOUT=14400` mieści łańcuch w Pythonie na 9 kopiach (~2.5 h).
+
+Do pracy jedna uwaga: „1 TB” to rozmiar plików, a pętla czyta z nich tylko używane gałęzie —
+od ~5 GB przy jednym wątku do ~90 GB przy 48 (`bytes_loop` rośnie z liczbą wątków, bo każdy
+czyta własny nagłówek drzewa).
 
 `$SCRATCH` jest czyszczony po ~30 dniach, więc wyniki skopiuj do `$PLG_GROUPS_STORAGE/<grant>/`.
 `MaxRSS` z `sacct` (na końcu logu) powinien zgadzać się z `time_maxrss_kb` w `bench.csv`.
@@ -292,8 +403,19 @@ pozwala podać mniejsze wejście.
 | `09_speedup_baselines.png` | przyspieszenie względem `ImplicitMT(1)` i względem wersji bez MT | T1 |
 | `10_cores_busy.png` | ile rdzeni pracowało w pętli, pełny plik i slim | T1, T6 |
 | `11_file_width.png` | czas pętli, przyspieszenie i RSS: pełny schemat vs slim | T6 |
+| `13_input_size.png` | szczyt RSS i czas całkowity (setup + JIT + pętla) względem rozmiaru wejścia w GB, RDF / uproot / Python | `size`, `sizepy` |
+
+Przy `DATASET=big` nie ma biegów T5, więc wykres 08 powstaje z największego punktu serii
+rozmiarów (9 kopii, ~98 GB). Na konsolę trafiają też nachylenia z serii (GB RSS i sekundy na
+1 GB wejścia) oraz rozmiar, od którego RDF jest w sumie szybszy od uproot.
 
 Wąsy na wykresach 01–04 i 09–11 to min–max z powtórzeń, punkt to mediana.
+
+Obok wykresów powstaje `table_scalability_<test>.tex` (`filter`, `chain`, `efficiency`), czyli
+tabela skalowalności z pracy (`tab:scalability`) liczona z T1: czas pętli przy `ImplicitMT(n)`,
+przepustowość, przyspieszenie i efektywność względem `ImplicitMT(1)` oraz CPU% całego procesu
+z GNU time. Podpis sam podaje liczbę zdarzeń, wejście, liczbę powtórzeń, zimny odczyt i maksimum.
+Powstaje też przy `--csv-only`.
 
 Na konsolę trafiają też: frakcja szeregowa $s$ z Amdahla, $\sigma$ i $\kappa$ z USL,
 przewidywane optimum liczby wątków i **zmierzony** udział setup + JIT przy jednym wątku. Jeśli
@@ -308,7 +430,7 @@ T1 t0” różnicę między identycznymi biegami RDF z T5 i z T1.
 
 | zmienna | domyślnie | znaczenie |
 |---|---|---|
-| `DATASET` | `synthetic` | `synthetic` (`ds_xN`) albo `real` (listy z `make_filelists.py`) |
+| `DATASET` | `synthetic` | `synthetic` (`ds_xN`), `real` (listy z `make_filelists.py`) albo `big` (kopie z `make_bigset.sh`) |
 | `DATA_DIR` | `test/data` | katalog z wejściami |
 | `DS_CORE` / `DS_IMPL` / `DS_SLIM` | zależnie od `DATASET` (tabela w „Dane”) | wejścia T1 / T4–T5 / T6 |
 | `WEAK_PATTERN` | `ds_x%s.root` / `weak_%s.txt` | wejście T2, `%s` = N |
@@ -319,8 +441,12 @@ T1 t0” różnicę między identycznymi biegami RDF z T5 i z T1.
 | `THREADS_LIST` | `1 2 4 8 12 16 24 32 48` | sweep wątków w T1 i T6 |
 | `WEAK_SERIES` | `1 2 4 8 16 32` / `1 2 4 8 16 32 48` | N w T2 |
 | `CHAIN_LENS` | `1 3 5` | długości łańcucha w T4 |
+| `TESTS` | wszystkie / `strong weak qstruct size` dla `big` | które eksperymenty biegną |
+| `SIZE_SERIES` | `1 2 4 6 8 9` | liczby kopii w `size` i `sizepy` (tylko `big`) |
+| `BIG_COPIES` / `IMPL_COPIES` | `96` / `9` | ile kopii `ds_N.root` ma `lists/core.txt` / `lists/impl.txt` (tylko `big`) |
+| `RESUME` | — | `1` dopisuje do `raw.jsonl` i pomija biegi, które są już `ok` |
 | `REPEATS_STRONG` / `_WEAK` / `_QSTRUCT` / `_IMPL` / `_SLIM` | `5` / `3` / `2` / `3` / `3` | powtórzenia (mediana, wąsy min–max) |
-| `RUN_TIMEOUT` | `2400` | limit na bieg [s] |
+| `RUN_TIMEOUT` | `2400` (w `slurm_benchmark.sbatch` dla `big`: `14400`) | limit na bieg [s] |
 | `VALIDATE_THREADS` | `8` | liczba wątków w teście 1 vs N w `run_all.sh` |
 | `SAMPLE_INTERVAL` | `0.1` | okres próbkowania RSS [s] |
 | `DRY_RUN` | — | `1` wypisuje biegi bez uruchamiania |

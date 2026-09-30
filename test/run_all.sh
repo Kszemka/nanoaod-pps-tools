@@ -31,7 +31,7 @@ LOG="$RESULTS/run_all_$(date +%Y%m%d_%H%M%S).log"
 
 echo "python : $PY" | tee -a "$LOG"
 echo "machine: ${MACHINE:-local}" | tee -a "$LOG"
-echo "data   : $DATA_DIR (${DATASET:-synthetic})" | tee -a "$LOG"
+echo "data   : $DATA_DIR (${DATASET:-synthetic}, ${STORAGE:-lustre})" | tee -a "$LOG"
 echo "results: $RESULTS" | tee -a "$LOG"
 
 # uproot and awkward carry the columnar baseline. Without them the Python side of the comparison

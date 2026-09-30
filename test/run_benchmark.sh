@@ -5,6 +5,12 @@
 #
 #   DATASET=synthetic (default)  the ds_x1..ds_x32 series: N copies of examples/test.root
 #   DATASET=real                 Tier0 NanoAOD as .txt file lists from make_filelists.py
+#   DATASET=big                  ~1 TB: ds_1..ds_96.root, plain copies of ds_x32.root from
+#                                make_bigset.sh, one repeat each, read cold (COLD=1); T1/T2 on
+#                                up to 1 TB, T4 on ~100 GB and the size series (TESTS)
+#
+# TESTS selects the experiments; ONLY_USED=1 additionally drops the implementations no figure
+# uses. Both default per dataset, see below.
 #
 #   T1  strong scaling   core input (ds_x32 / core.txt), thread count varying  -> Amdahl, USL
 #   T2  weak scaling     N threads on N units of work (ds_xN / weak_N.txt)
@@ -13,6 +19,8 @@
 #                        pinned to one core (PIN_CORE)
 #   T6  file width       T1 again on the slim copy of the core input: 6 columns, same events
 #   T2S weak on slim     T2 again on slim copies of the weak inputs
+#   size / sizepy        T5 against input size (DATASET=big only): RDataFrame and uproot, and
+#                        separately Python, pinned to one core on 1..9 copies (~11-98 GB)
 #
 # T3 is memory and has no runs of its own: every run writes an RSS trace and a peak.
 # T1 and T6 include t0, ImplicitMT off, so speedup can be quoted against the fastest serial
@@ -25,7 +33,12 @@
 # Usage:
 #   MACHINE=ares DATA_DIR=$SCRATCH/bench/data ./test/run_benchmark.sh
 #   MACHINE=ares DATASET=real DATA_DIR=$SCRATCH/bench/real ./test/run_benchmark.sh
+#   MACHINE=ares DATASET=big  DATA_DIR=$SCRATCH/bench/data ./test/run_benchmark.sh
 #   DRY_RUN=1 ./test/run_benchmark.sh    # list the runs without executing them
+#
+# RESUME=1 appends to an existing $RESULTS/raw.jsonl and skips every label already recorded
+# there as ok: a job that ran out of wall clock, or a second job adding TESTS=sizepy to the
+# first one's results, runs only what is missing. Failed runs are retried; warm-ups always run.
 
 set -uo pipefail
 
@@ -46,6 +59,36 @@ MACHINE="${MACHINE:-local}"
 # powers of two the region where the curve turns over is three points.
 THREADS_LIST="${THREADS_LIST:-1 2 4 8 12 16 24 32 48}"
 CHAIN_LENS="${CHAIN_LENS:-1 3 5}"
+
+# DATASET=big is one pass over ~1 TB rather than a campaign that can afford repeats: a single
+# strong-scaling sweep there is already ~2 h. It also defaults to cold reads (see COLD below)
+# and to the variants the thesis actually plots (ONLY_USED).
+DATASET="${DATASET:-synthetic}"
+if [[ "$DATASET" == big ]]; then
+    REPEATS_STRONG="${REPEATS_STRONG:-1}"
+    REPEATS_WEAK="${REPEATS_WEAK:-1}"
+    REPEATS_QSTRUCT="${REPEATS_QSTRUCT:-1}"
+    REPEATS_IMPL="${REPEATS_IMPL:-1}"
+    REPEATS_SLIM="${REPEATS_SLIM:-1}"
+    COLD="${COLD:-1}"
+    ONLY_USED="${ONLY_USED:-1}"
+    # Only what ds_x32 could not answer:
+    #   strong, weak  on up to the whole 1 TB;
+    #   qstruct  on impl.txt, ~100 GB: rdf-eager reads its input up to six times, which on the
+    #            whole set would be 6 TB;
+    #   size     T5 as a series of sizes instead of one input: the Python and uproot paths
+    #            materialise whole columns, so on 1 TB they would die on memory;
+    #   sizepy   the Python half of that series, ~9 h and the only runs that can run out of
+    #            memory, so it is a second job (TESTS=sizepy RESUME=1) rather than part of this.
+    # slim and weakslim, the file-width experiment, do not depend on the input size.
+    TESTS="${TESTS:-strong weak qstruct size}"
+fi
+# Copies per point of the size and sizepy series (DATASET=big).
+SIZE_SERIES="${SIZE_SERIES:-1 2 4 6 8 9}"
+RESUME="${RESUME:-}"
+# The discarded warm-up runs absorb the first process's cold ROOT libraries. Without them that
+# cost lands on the first measured run (r1_strong_filter_rdf_t0).
+WARMUP_RUNS="${WARMUP_RUNS:-1}"
 REPEATS_STRONG="${REPEATS_STRONG:-5}"
 REPEATS_WEAK="${REPEATS_WEAK:-3}"
 REPEATS_QSTRUCT="${REPEATS_QSTRUCT:-2}"
@@ -58,10 +101,42 @@ PIN_CORE="${PIN_CORE:-2}"
 # decides whether a slow run is recorded or thrown away.
 RUN_TIMEOUT="${RUN_TIMEOUT:-2400}"
 SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-0.1}"
+# COLD=1 drops the inputs' pages from the page cache before every run, so each run reads them
+# from the file system instead of from RAM. Only meaningful on a set of distinct files: see
+# make_bigset.sh for why the 1 TB input is copies rather than one file named many times.
+COLD="${COLD:-}"
+# ONLY_USED=1 runs just the implementations that end up in a figure or a number in the thesis.
+ONLY_USED="${ONLY_USED:-}"
+# Which experiments to run, in the order below. Names are the ones that appear in the labels:
+#   strong    T1  thread sweep on the core input        -> Amdahl, USL, efficiency, RSS, cores
+#   weak      T2  N threads on N units of work
+#   qstruct   T4  lazy vs eager vs Report(), 1 thread
+#   impl      T5  RDataFrame vs Python vs uproot, pinned to one core
+#   slim      T6  T1 again on the 6-column copy         -> where the ceiling comes from
+#   weakslim  T2S T2 again on the 6-column copies
+#   size      T5's RDataFrame and uproot runs on each point of SIZE_SERIES (DATASET=big)
+#   sizepy    T5's Python runs on the same points, smallest first (DATASET=big)
+TESTS="${TESTS:-strong weak qstruct impl slim weakslim}"
+
+# has_test <name>
+has_test() {
+    [[ " $TESTS " == *" $1 "* ]]
+}
+for requested in $TESTS; do
+    case "$requested" in
+        strong|weak|qstruct|impl|slim|weakslim) ;;
+        size|sizepy)
+            if [[ "$DATASET" != big ]]; then
+                echo "ERROR: TESTS=$requested needs DATASET=big (the ds_N.root copies)." >&2
+                exit 1
+            fi
+            ;;
+        *) echo "ERROR: unknown test '$requested' in TESTS." >&2; exit 1 ;;
+    esac
+done
 
 # Inputs are a .root file or a .txt list of them; every benchmark accepts both. Each variable
 # can still be overridden on its own.
-DATASET="${DATASET:-synthetic}"
 case "$DATASET" in
     synthetic)
         DS_CORE="${DS_CORE:-$DATA_DIR/ds_x32.root}"
@@ -83,8 +158,41 @@ case "$DATASET" in
         WEAK_SLIM_PATTERN="${WEAK_SLIM_PATTERN:-weak_%s_slim.txt}"
         WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32 48}"
         ;;
+    big)
+        # ds_1.root .. ds_$BIG_COPIES.root in DATA_DIR, from make_bigset.sh. The lists over
+        # them are written below into lists/, so the layout is the same as `real` and nothing
+        # further down has to know which of the two it is running on.
+        BIG_COPIES="${BIG_COPIES:-96}"
+        # T4's input: rdf-eager reads it up to six times, which on the whole set would be 6 TB.
+        IMPL_COPIES="${IMPL_COPIES:-9}"
+        DS_CORE="${DS_CORE:-$DATA_DIR/lists/core.txt}"
+        DS_IMPL="${DS_IMPL:-$DATA_DIR/lists/impl.txt}"
+        DS_SLIM="${DS_SLIM:-$DATA_DIR/lists/core_slim.txt}"
+        WEAK_PATTERN="${WEAK_PATTERN:-lists/weak_%s.txt}"
+        WEAK_SLIM_PATTERN="${WEAK_SLIM_PATTERN:-lists/weak_%s_slim.txt}"
+        SIZE_PATTERN="${SIZE_PATTERN:-lists/size_%s.txt}"
+        WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32 48}"
+        if has_test slim || has_test weakslim; then
+            echo "ERROR: DATASET=big has no slim copies; TESTS=slim/weakslim run on ds_x32." >&2
+            exit 1
+        fi
+        # 2N copies at N threads: without them the largest weak points would reuse files and
+        # stop being a weak-scaling series.
+        for n in $WEAK_SERIES; do
+            if [[ $((2 * n)) -gt "$BIG_COPIES" ]]; then
+                echo "ERROR: weak point $n needs $((2 * n)) copies, BIG_COPIES is $BIG_COPIES." >&2
+                exit 1
+            fi
+        done
+        for n in $IMPL_COPIES $SIZE_SERIES; do
+            if [[ "$n" -gt "$BIG_COPIES" ]]; then
+                echo "ERROR: $n copies asked for, BIG_COPIES is $BIG_COPIES." >&2
+                exit 1
+            fi
+        done
+        ;;
     *)
-        echo "ERROR: DATASET must be 'synthetic' or 'real', not '$DATASET'" >&2
+        echo "ERROR: DATASET must be 'synthetic', 'real' or 'big', not '$DATASET'" >&2
         exit 1
         ;;
 esac
@@ -96,6 +204,34 @@ weak_input() {
 weak_slim_input() {
     printf "%s/${WEAK_SLIM_PATTERN}" "$DATA_DIR" "$1"
 }
+
+size_input() {
+    printf "%s/${SIZE_PATTERN:-}" "$DATA_DIR" "$1"
+}
+
+# write_big_list <name> <copies>: lists/<name> over the first <copies> of ds_N.root. Entries are
+# relative to the list (../ds_N.root), the rule bench_common.input_files applies, so the set
+# stays valid wherever DATA_DIR is mounted.
+write_big_list() {
+    local path="$DATA_DIR/lists/$1" count="$2" i
+    for ((i = 1; i <= count; i++)); do
+        printf '../ds_%d.root\n' "$i"
+    done >"${path}.partial"
+    mv "${path}.partial" "$path"
+}
+
+if [[ "$DATASET" == big && -z "${DRY_RUN:-}" ]]; then
+    mkdir -p "$DATA_DIR/lists"
+    write_big_list core.txt "$BIG_COPIES"
+    write_big_list impl.txt "$IMPL_COPIES"
+    for n in $WEAK_SERIES; do
+        write_big_list "weak_${n}.txt" $((2 * n))
+    done
+    for n in $SIZE_SERIES; do
+        write_big_list "size_${n}.txt" "$n"
+    done
+    echo "lists: $DATA_DIR/lists (core $BIG_COPIES, impl $IMPL_COPIES, weak 2N, size N copies)"
+fi
 
 # The .root files behind an input: the file itself, or a list's entries with relative paths
 # resolved against the list's directory (the rule bench_common.input_files applies).
@@ -120,6 +256,39 @@ export MKL_NUM_THREADS=1
 export NUMEXPR_NUM_THREADS=1
 export MACHINE SAMPLE_INTERVAL
 
+# drop_pages <file>...
+#
+# POSIX_FADV_DONTNEED evicts a file's clean pages from the page cache. It needs no privileges
+# (unlike /proc/sys/vm/drop_caches, which is root-only and would also throw away ROOT's
+# libraries), and it is per-file, so it touches nothing but the inputs.
+drop_pages() {
+    [[ $# -eq 0 ]] && return 0
+    "$PY" - "$@" <<'PYEOF'
+import os
+import sys
+
+for path in sys.argv[1:]:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+    finally:
+        os.close(fd)
+PYEOF
+}
+
+# posix_fadvise is Linux-only (it is absent on macOS), so a cold campaign asked for on a laptop
+# would otherwise fail on its first run. Downgrade to warm reads instead and say so: the one
+# thing that must not happen is a campaign that labels warm reads "cold".
+if [[ -n "$COLD" ]] \
+    && ! "$PY" -c 'import os, sys; sys.exit(0 if hasattr(os, "posix_fadvise") else 1)'; then
+    echo "WARNING: no posix_fadvise on this platform; running with warm reads (COLD ignored)." >&2
+    COLD=""
+fi
+# Every record says which of the two it is, so a cold campaign can never be averaged into a
+# warm one by mistake.
+CACHE="${COLD:+cold}"
+export CACHE="${CACHE:-warm}"
+
 if [[ -z "${DRY_RUN:-}" ]] && ! "$PY" -c "import ROOT" 2>/dev/null; then
     echo "ERROR: '$PY' cannot import ROOT. Set PY=/path/to/python with PyROOT." >&2
     exit 1
@@ -131,6 +300,11 @@ INPUTS=("$DS_CORE" "$DS_IMPL")
 for n in $WEAK_SERIES; do
     INPUTS+=("$(weak_input "$n")")
 done
+if has_test size || has_test sizepy; then
+    for n in $SIZE_SERIES; do
+        INPUTS+=("$(size_input "$n")")
+    done
+fi
 missing=0
 for input in "${INPUTS[@]}"; do
     if [[ ! -f "$input" ]]; then
@@ -145,10 +319,35 @@ for input in "${INPUTS[@]}"; do
         fi
     done < <(list_files "$input")
 done
+if [[ "$missing" -ne 0 && "$DATASET" == big ]]; then
+    echo "       Make the copies first: bash test/make_bigset.sh --source $DATA_DIR/ds_x32.root" \
+        "--copies $BIG_COPIES" >&2
+fi
 [[ "$missing" -eq 0 || -n "${DRY_RUN:-}" ]] || exit 1
 
 mkdir -p "$RESULTS"
 RAW="$RESULTS/raw.jsonl"
+
+# Labels already measured, one per line, for RESUME. A file rather than an associative array
+# because macOS still ships bash 3.2.
+DONE_LABELS="$(mktemp)"
+trap 'rm -f "$DONE_LABELS"' EXIT
+if [[ -n "$RESUME" && -f "$RAW" ]]; then
+    "$PY" - "$RAW" >"$DONE_LABELS" <<'PYEOF'
+import json
+import sys
+
+with open(sys.argv[1]) as f:
+    for line in f:
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if record.get("status") == "ok" and record.get("label"):
+            print(record["label"])
+PYEOF
+    echo "RESUME: $(wc -l <"$DONE_LABELS" | tr -d ' ') runs already in $RAW are skipped"
+fi
 
 TIME_BIN=""
 for candidate in /usr/bin/time /usr/local/bin/gtime "$(command -v gtime 2>/dev/null)"; do
@@ -176,17 +375,38 @@ fi
 # The RSS trace is written by the benchmark process itself, into $RSS_TRACE: the command is
 # wrapped in `timeout` and `/usr/bin/time`, so a pid seen from here would be the wrapper's.
 # With PINNED=1 the benchmark process (and every thread it starts) is confined to PIN_CORE.
+# Returns 1 when the run failed or timed out, 0 otherwise (including a run RESUME skipped).
 run_one() {
     local label="$1" script="$2"
     shift 2
     local pinned=""
     [[ -n "${PINNED:-}" && -n "$TASKSET_BIN" ]] && pinned="$PIN_CORE"
 
+    if [[ "$label" != warmup_* ]] && grep -Fxq "$label" "$DONE_LABELS"; then
+        echo "  == $label (already recorded, skipped)"
+        return 0
+    fi
+
     if [[ -n "${DRY_RUN:-}" ]]; then
         DRY_RUN_COUNT=$((${DRY_RUN_COUNT:-0} + 1))
         printf '  [%3d] %-44s %s %s%s\n' "$DRY_RUN_COUNT" "$label" "$script" "$*" \
             "${pinned:+  [core $pinned]}"
         return
+    fi
+
+    # Whatever this run is about to read, minus the page cache. The input is taken from the
+    # run's own --input so that a run on the slim set does not evict the full one.
+    if [[ -n "$COLD" ]]; then
+        local -a inputs=()
+        local i
+        for ((i = 1; i <= $#; i++)); do
+            if [[ "${!i}" == "--input" ]]; then
+                local next=$((i + 1))
+                while IFS= read -r file; do inputs+=("$file"); done \
+                    < <(list_files "${!next}")
+            fi
+        done
+        [[ "${#inputs[@]}" -gt 0 ]] && drop_pages "${inputs[@]}"
     fi
 
     local time_file stdout_file
@@ -208,7 +428,7 @@ run_one() {
         printf '{"label":"%s","status":"failed","exit_code":%d,"machine":"%s","timeout_s":%s}\n' \
             "$label" "$exit_code" "$MACHINE" "$RUN_TIMEOUT" >>"$RAW"
         rm -f "$time_file" "$stdout_file"
-        return
+        return 1
     fi
 
     "$PY" - "$stdout_file" "$time_file" "$label" "$pinned" >>"$RAW" <<'PYEOF'
@@ -253,11 +473,14 @@ PYEOF
 # so without this the first run on each file carries a cold read. Reading the whole files
 # (rather than running one benchmark) warms every branch the tests touch. make_slim.py writes
 # through .partial names, so an existing slim input is always a complete one.
-SLIM_INPUTS=("$DS_SLIM")
-for n in $WEAK_SERIES; do
-    SLIM_INPUTS+=("$(weak_slim_input "$n")")
-done
-if [[ -z "${DRY_RUN:-}" ]]; then
+SLIM_INPUTS=()
+if has_test slim || has_test weakslim; then
+    SLIM_INPUTS+=("$DS_SLIM")
+    for n in $WEAK_SERIES; do
+        SLIM_INPUTS+=("$(weak_slim_input "$n")")
+    done
+fi
+if [[ -z "${DRY_RUN:-}" ]] && { has_test slim || has_test weakslim; }; then
     if [[ ! -f "$DS_SLIM" ]]; then
         echo "=== writing $(basename "$DS_SLIM") ==="
         "$PY" "$TEST_DIR/make_slim.py" --input "$DS_CORE" --output "$DS_SLIM" || exit 1
@@ -270,25 +493,60 @@ if [[ -z "${DRY_RUN:-}" ]]; then
                 || exit 1
         fi
     done
-    echo "=== warming the page cache ==="
-    for input in "${INPUTS[@]}" "${SLIM_INPUTS[@]}"; do
-        list_files "$input"
-    done | sort -u | while IFS= read -r file; do
-        cat "$file" >/dev/null
-    done
+fi
+
+if [[ -z "${DRY_RUN:-}" ]]; then
+    # With COLD the next thing run_one does is throw these pages away again, and on the 1 TB
+    # set reading everything first would cost ~1 h for nothing. Instead the campaign checks
+    # that eviction works at all, because if it silently did not, every "cold" number would be
+    # a warm one. fincore is util-linux >= 2.31 and is not everywhere, hence the fallback.
+    if [[ -n "$COLD" ]]; then
+        echo "=== cold reads: checking that the page cache can be dropped ==="
+        probe="$(list_files "$DS_CORE" | head -1)"
+        head -c 65536 "$probe" >/dev/null
+        drop_pages "$probe"
+        if command -v fincore >/dev/null; then
+            resident="$(fincore --bytes --output PAGES --noheadings "$probe" | tr -d ' ')"
+            echo "  $(basename "$probe"): ${resident} pages resident after eviction"
+            if [[ "${resident:-0}" -ne 0 ]]; then
+                echo "ERROR: pages stayed in the cache, so the reads would not be cold." >&2
+                echo "       Run with COLD= to measure warm reads instead." >&2
+                exit 1
+            fi
+        else
+            echo "  WARNING: fincore not found; eviction not verified." >&2
+        fi
+    else
+        echo "=== warming the page cache ==="
+        for input in "${INPUTS[@]}" ${SLIM_INPUTS[@]+"${SLIM_INPUTS[@]}"}; do
+            list_files "$input"
+        done | sort -u | while IFS= read -r file; do
+            cat "$file" >/dev/null
+        done
+    fi
 fi
 
 # The page cache is not the only cold thing: the first process of the job also loads ROOT's
 # libraries and PCH off Lustre, and in the previous campaign r1_strong_filter_rdf_t1 ran at
 # 69% CPU and 13.9 s against 99% and 9.6 s for the same label later. These runs absorb that
 # and are never plotted (the plots select on the r<N>_ prefix).
-echo "=== discarded warm-up runs ==="
-run_one "warmup_filter_rdf" bench_filter.py --input "$DS_CORE" --impl rdf
-run_one "warmup_chain_rdf-lazy" bench_chain.py --input "$DS_CORE" --impl rdf-lazy
-run_one "warmup_eff_jit" bench_efficiency.py --input "$DS_CORE" --impl jit
+#
+# Under COLD they run on a single file: what they are for is the libraries and the PCH, and
+# reading 1 TB three times to get them would cost hours.
+WARMUP_INPUT_SET="$DS_CORE"
+if [[ -n "$COLD" && -z "${DRY_RUN:-}" ]]; then
+    WARMUP_INPUT_SET="$(list_files "$DS_CORE" | head -1)"
+fi
+if [[ "$WARMUP_RUNS" -eq 1 ]]; then
+    echo "=== discarded warm-up runs ==="
+    run_one "warmup_filter_rdf" bench_filter.py --input "$WARMUP_INPUT_SET" --impl rdf
+    run_one "warmup_chain_rdf-lazy" bench_chain.py --input "$WARMUP_INPUT_SET" --impl rdf-lazy
+    run_one "warmup_eff_jit" bench_efficiency.py --input "$WARMUP_INPUT_SET" --impl jit
+fi
 
 # T1: the same events every time, thread count varying. Repeats are the outer loop so that
 # slow drift on the node spreads across thread counts instead of landing on one of them.
+if has_test strong; then
 echo "=== T1 strong scaling on $(basename "$DS_CORE") ==="
 for repeat in $(seq 1 "$REPEATS_STRONG"); do
     for threads in 0 $THREADS_LIST; do
@@ -300,9 +558,11 @@ for repeat in $(seq 1 "$REPEATS_STRONG"); do
             --input "$DS_CORE" --impl jit --threads "$threads"
     done
 done
+fi
 
 # T2: N threads against N units of work, so each thread keeps the same slice of it. Ideal
 # weak scaling is a flat wall-time line.
+if has_test weak; then
 echo "=== T2 weak scaling: $WEAK_PATTERN on N threads ==="
 for repeat in $(seq 1 "$REPEATS_WEAK"); do
     for n in $WEAK_SERIES; do
@@ -315,9 +575,11 @@ for repeat in $(seq 1 "$REPEATS_WEAK"); do
             --input "$weak_ds" --impl jit --threads "$n"
     done
 done
+fi
 
 # T4: single-threaded, because the number of event loops is a property of how the query was
 # written rather than of the machine.
+if has_test qstruct; then
 echo "=== T4 query structure: chain lengths $CHAIN_LENS ==="
 for repeat in $(seq 1 "$REPEATS_QSTRUCT"); do
     for len in $CHAIN_LENS; do
@@ -327,18 +589,27 @@ for repeat in $(seq 1 "$REPEATS_QSTRUCT"); do
         done
     done
 done
+fi
 
 # T5: every implementation on one input, so the comparison a reader is most likely to
 # challenge is "same files, same codec, same events". The Python chain alone costs ~16 min
 # on ~11 M events, which is why the impl input is not the (larger) core input on real data,
 # and why it runs in the first repeat only. With a single run the RDF chain and efficiency
 # came out 12-24% slower than the identical T1 t0 runs, hence the repeats for the rest.
-echo "=== T5 implementations on $(basename "$DS_IMPL")${TASKSET_BIN:+, pinned to core $PIN_CORE} ==="
+#
+# ONLY_USED=1 drops the three variants that no figure and no number in the thesis uses: the
+# AsNumpy `vector` mode (always slower than `loop`, and the figure keeps one Python bar),
+# correctionlib (part of the RDataFrame solution, not a competing implementation) and the
+# unpinned uproot runs. On the 1 TB set each of them would still cost tens of minutes.
+if has_test impl; then
+echo "=== T5 implementations on $(basename "$DS_IMPL")${TASKSET_BIN:+, pinned to core $PIN_CORE}${ONLY_USED:+, plotted variants only} ==="
 export PINNED=1
 for repeat in $(seq 1 "$REPEATS_IMPL"); do
     run_one "r${repeat}_impl_filter_rdf" bench_filter.py --input "$DS_IMPL" --impl rdf
-    run_one "r${repeat}_impl_filter_python_vector" bench_filter.py \
-        --input "$DS_IMPL" --impl python --mode vector
+    if [[ -z "$ONLY_USED" ]]; then
+        run_one "r${repeat}_impl_filter_python_vector" bench_filter.py \
+            --input "$DS_IMPL" --impl python --mode vector
+    fi
     run_one "r${repeat}_impl_filter_python_loop" bench_filter.py \
         --input "$DS_IMPL" --impl python --mode loop
     run_one "r${repeat}_impl_filter_uproot" bench_filter.py --input "$DS_IMPL" --impl uproot
@@ -350,26 +621,32 @@ for repeat in $(seq 1 "$REPEATS_IMPL"); do
     run_one "r${repeat}_impl_chain_uproot" bench_chain.py --input "$DS_IMPL" --impl uproot
 
     run_one "r${repeat}_impl_eff_jit" bench_efficiency.py --input "$DS_IMPL" --impl jit
-    run_one "r${repeat}_impl_eff_correctionlib" bench_efficiency.py \
-        --input "$DS_IMPL" --impl correctionlib
-    run_one "r${repeat}_impl_eff_python_vector" bench_efficiency.py \
-        --input "$DS_IMPL" --impl python --mode vector
+    if [[ -z "$ONLY_USED" ]]; then
+        run_one "r${repeat}_impl_eff_correctionlib" bench_efficiency.py \
+            --input "$DS_IMPL" --impl correctionlib
+        run_one "r${repeat}_impl_eff_python_vector" bench_efficiency.py \
+            --input "$DS_IMPL" --impl python --mode vector
+    fi
     run_one "r${repeat}_impl_eff_python_loop" bench_efficiency.py \
         --input "$DS_IMPL" --impl python --mode loop
     run_one "r${repeat}_impl_eff_uproot" bench_efficiency.py --input "$DS_IMPL" --impl uproot
 done
 unset PINNED
 # uproot as a user gets it, with whatever threads it starts; a separate, labelled point.
-run_one "r1_impl_filter_uproot-default" bench_filter.py --input "$DS_IMPL" --impl uproot \
-    --tag own-threads
-run_one "r1_impl_chain_uproot-default" bench_chain.py --input "$DS_IMPL" --impl uproot \
-    --tag own-threads
-run_one "r1_impl_eff_uproot-default" bench_efficiency.py --input "$DS_IMPL" --impl uproot \
-    --tag own-threads
+if [[ -z "$ONLY_USED" ]]; then
+    run_one "r1_impl_filter_uproot-default" bench_filter.py --input "$DS_IMPL" --impl uproot \
+        --tag own-threads
+    run_one "r1_impl_chain_uproot-default" bench_chain.py --input "$DS_IMPL" --impl uproot \
+        --tag own-threads
+    run_one "r1_impl_eff_uproot-default" bench_efficiency.py --input "$DS_IMPL" --impl uproot \
+        --tag own-threads
+fi
+fi
 
 # T6: T1's sweep on an input that differs from the core one only in width. If the per-thread
 # cost (on ds_x32: ~245 MB RSS and ~55 ms of loop time per extra thread) comes from the ~2000
 # branches every worker has to set up, it shrinks here and the speedup peak moves right.
+if has_test slim; then
 echo "=== T6 file width: $(basename "$DS_SLIM") ==="
 for repeat in $(seq 1 "$REPEATS_SLIM"); do
     for threads in 0 $THREADS_LIST; do
@@ -381,11 +658,13 @@ for repeat in $(seq 1 "$REPEATS_SLIM"); do
             --input "$DS_SLIM" --impl jit --threads "$threads"
     done
 done
+fi
 
 # T2S: T2 on the slim copies. On the full files one unit of work (0.24-0.52 s of loop per
 # thread) is smaller than the ~1 s of CPU each worker spends building its ~2000-branch tree,
 # so T2 mostly measures that setup. Here the setup is gone and what remains is the scaling of
 # the work itself.
+if has_test weakslim; then
 echo "=== T2S weak scaling on slim: $WEAK_SLIM_PATTERN on N threads ==="
 for repeat in $(seq 1 "$REPEATS_WEAK"); do
     for n in $WEAK_SERIES; do
@@ -398,6 +677,67 @@ for repeat in $(seq 1 "$REPEATS_WEAK"); do
             --input "$weak_ds" --impl jit --threads "$n"
     done
 done
+fi
+
+# T5 against input size: the same variants as T5's figure, pinned to one core, on 1..9 copies.
+# What one input cannot show is how memory grows with the data: RDataFrame streams cluster by
+# cluster, while uproot and AsNumpy hold whole columns, and RDataFrame's fixed JIT cost is
+# amortised only past some size. The last point is T5 on ~100 GB.
+if has_test size; then
+echo "=== T5 against input size, RDataFrame and uproot: $SIZE_SERIES copies${TASKSET_BIN:+, pinned to core $PIN_CORE} ==="
+export PINNED=1
+for n in $SIZE_SERIES; do
+    size_ds="$(size_input "$n")"
+    run_one "r1_size_filter_rdf_c${n}" bench_filter.py --input "$size_ds" --impl rdf
+    run_one "r1_size_filter_uproot_c${n}" bench_filter.py --input "$size_ds" --impl uproot
+    run_one "r1_size_chain_rdf-lazy_c${n}" bench_chain.py --input "$size_ds" --impl rdf-lazy
+    run_one "r1_size_chain_uproot_c${n}" bench_chain.py --input "$size_ds" --impl uproot
+    run_one "r1_size_eff_jit_c${n}" bench_efficiency.py --input "$size_ds" --impl jit
+    run_one "r1_size_eff_uproot_c${n}" bench_efficiency.py --input "$size_ds" --impl uproot
+done
+unset PINNED
+fi
+
+# The Python half of the series, last, smallest first, and the chain (~16 min and ~16.6 GB of
+# RSS per copy) after everything else: on 8-9 copies it needs ~133-150 GB of a ~184 GB node,
+# and if the kernel kills it every other result is already on disk. A variant that failed at N
+# copies is not started on more: it would fail the same way after up to ~2 h of reading, so the
+# larger points are recorded as failed with skipped_after = N.
+py_failed_filter=""
+py_failed_eff=""
+py_failed_chain=""
+
+# size_py <variant> <copies> <label> <script> [args...]
+size_py() {
+    local variant="$1" n="$2" label="$3"
+    shift 3
+    local failed_var="py_failed_${variant}"
+    local failed_at="${!failed_var}"
+    if [[ -n "$failed_at" ]]; then
+        echo "  -> $label: not run, the same variant failed at $failed_at copies" >&2
+        printf '{"label":"%s","status":"failed","exit_code":null,"machine":"%s","skipped_after":%d}\n' \
+            "$label" "$MACHINE" "$failed_at" >>"$RAW"
+        return
+    fi
+    run_one "$label" "$@" || printf -v "$failed_var" '%s' "$n"
+}
+
+if has_test sizepy; then
+echo "=== T5 against input size, Python: $SIZE_SERIES copies${TASKSET_BIN:+, pinned to core $PIN_CORE} ==="
+export PINNED=1
+for n in $SIZE_SERIES; do
+    size_ds="$(size_input "$n")"
+    size_py filter "$n" "r1_size_filter_python_loop_c${n}" bench_filter.py \
+        --input "$size_ds" --impl python --mode loop
+    size_py eff "$n" "r1_size_eff_python_loop_c${n}" bench_efficiency.py \
+        --input "$size_ds" --impl python --mode loop
+done
+for n in $SIZE_SERIES; do
+    size_py chain "$n" "r1_size_chain_python_c${n}" bench_chain.py \
+        --input "$(size_input "$n")" --impl python
+done
+unset PINNED
+fi
 
 if [[ -n "${DRY_RUN:-}" ]]; then
     echo

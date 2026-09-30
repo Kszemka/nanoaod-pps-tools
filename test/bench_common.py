@@ -274,7 +274,13 @@ class Bench:
             "pot_type": args.pot_type,
             "tag": args.tag,
             "input": os.path.basename(args.input),
+            # On disk, compressed: the size a reader would quote for the dataset.
+            "input_bytes": sum(os.path.getsize(f) for f in input_files(args.input)),
             "machine": os.environ.get("MACHINE", "local"),
+            "storage": os.environ.get("STORAGE", "lustre"),
+            # "cold" means run_benchmark.sh evicted the inputs' pages before this run, so the
+            # loop read them from the file system rather than from RAM.
+            "cache": os.environ.get("CACHE", "warm"),
             "root_version": ROOT.gROOT.GetVersion(),
             # Everything resident before any measurement started: the interpreter, PyROOT and
             # numpy -- ~470 MB, which on small inputs is most of the peak.
