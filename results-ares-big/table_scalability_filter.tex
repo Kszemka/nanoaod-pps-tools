@@ -1,0 +1,20 @@
+\begin{table}[htbp]
+\centering
+\caption{Parallel scalability metrics for the single filter on $1.07$ billion events (\texttt{core.txt}), measured on Ares (single run, inputs evicted from the page cache before every run, speedup against \texttt{ImplicitMT} with one thread). Nominal CPU utilisation for $n$ threads is $100n\%$, so the final column shows how far below saturation the execution remains. The speedup maximum at 48 threads coincides with a parallel efficiency of only $44\%$.}
+\label{tab:scalability-filter}
+\begin{tabular}{rrrrrr}
+\toprule
+Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & CPU \\
+\midrule
+ 1 & 444.91 & 2.39 & 1.00 & 100\% & 85\% \\
+ 2 & 223.87 & 4.76 & 1.99 & 99\% & 154\% \\
+ 4 & 119.09 & 8.95 & 3.74 & 93\% & 259\% \\
+ 8 & 64.17 & 16.60 & 6.93 & 87\% & 391\% \\
+12 & 45.29 & 23.52 & 9.82 & 82\% & 499\% \\
+16 & 35.35 & 30.14 & 12.59 & 79\% & 561\% \\
+24 & 25.27 & 42.16 & 17.60 & 73\% & 637\% \\
+32 & 22.49 & 47.38 & 19.79 & 62\% & 712\% \\
+48 & \textbf{21.28} & \textbf{50.06} & \textbf{20.90} & 44\% & 773\% \\
+\bottomrule
+\end{tabular}
+\end{table}
