@@ -1,0 +1,26 @@
+\begin{table}[htbp]
+\centering
+\caption{Parallel scalability metrics for the single filter on $355.1$ million events (\texttt{size\_32.txt}), measured on Helios (single run, inputs evicted from the page cache before every run, speedup against \texttt{ImplicitMT} with one thread). Nominal CPU utilisation for $n$ threads is $100n\%$. CPU loop covers the same event-loop window as the time column; CPU process is the whole-process figure, which also includes the single-threaded setup and JIT. The speedup maximum at 80 threads coincides with a parallel efficiency of only $28\%$.}
+\label{tab:scalability-filter}
+\begin{tabular}{rrrrrrr}
+\toprule
+Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & CPU loop & CPU process \\
+\midrule
+ 1 & 97.73 & 3.63 & 1.00 & 100\% & 87\% & 83\% \\
+ 2 & 50.55 & 7.03 & 1.93 & 97\% & 172\% & 148\% \\
+ 4 & 27.39 & 12.97 & 3.57 & 89\% & 333\% & 233\% \\
+ 8 & 15.03 & 23.62 & 6.50 & 81\% & 664\% & 361\% \\
+12 & 11.22 & 31.65 & 8.71 & 73\% & 1012\% & 443\% \\
+16 & 8.54 & 41.58 & 11.44 & 72\% & 1305\% & 497\% \\
+24 & 6.57 & 54.08 & 14.88 & 62\% & 1931\% & 641\% \\
+32 & 5.14 & 69.14 & 19.03 & 59\% & 2523\% & 680\% \\
+48 & 4.36 & 81.39 & 22.40 & 47\% & 3292\% & 745\% \\
+64 & 4.34 & 81.92 & 22.54 & 35\% & 3823\% & 816\% \\
+80 & \textbf{4.30} & \textbf{82.67} & \textbf{22.75} & 28\% & 4177\% & 932\% \\
+96 & 4.51 & 78.78 & 21.68 & 23\% & 4387\% & 950\% \\
+128 & 5.04 & 70.52 & 19.41 & 15\% & 4407\% & 1033\% \\
+160 & 5.79 & 61.30 & 16.87 & 11\% & 4043\% & 1057\% \\
+192 & 6.63 & 53.57 & 14.74 & 8\% & 4226\% & 1259\% \\
+\bottomrule
+\end{tabular}
+\end{table}
