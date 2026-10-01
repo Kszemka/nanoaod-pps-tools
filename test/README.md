@@ -374,6 +374,60 @@ czyta własny nagłówek drzewa).
 `$SCRATCH` jest czyszczony po ~30 dniach, więc wyniki skopiuj do `$PLG_GROUPS_STORAGE/<grant>/`.
 `MaxRSS` z `sacct` (na końcu logu) powinien zgadzać się z `time_maxrss_kb` w `bench.csv`.
 
+## Uruchomienie na Heliosie (192 rdzenie)
+
+Na Ares 1 TB skaluje się aż do 48 rdzeni bez maksimum, a ds_x32 ma maksimum przy 8–16 wątkach.
+Helios (partycja `plgrid`: 192 CPU, ~386 GB na węzeł) sprawdza, gdzie leży optimum, kiedy rdzeni
+jest więcej. T1 biegnie na czterech rozmiarach tego samego zbioru: 11 M, 100 M, 355 M i
+1065 M zdarzeń. T2 biegnie na 1 TB z 1 kopią na wątek (`WEAK_UNIT=1`): 192 wątki przy
+2 kopiach na wątek potrzebowałyby 384 kopii, czyli 4 TB.
+
+Przygotowanie, raz, na loginie:
+1. Sklonuj repo do `$SCRATCH/bench/nanoaod-pps-tools`.
+2. Zainstaluj micromamba do `$SCRATCH/bench/micromamba`.
+3. `micromamba create -f test/environment.yml` (ROOT ma być ten sam co na Ares, 6.32.10).
+4. `git lfs pull`.
+5. Dane: `ds_x32.root` + `ds_1..ds_96.root` w `$SCRATCH/bench/data`. `make_bigset.sh` uzupełni
+   brakujące kopie.
+
+Cztery zadania jedno po drugim (`afterany`, więc nie dzielą Lustre):
+
+```bash
+cd $SCRATCH/bench/nanoaod-pps-tools
+export MACHINE=helios DATASET=big SIZE_SERIES="9 32"
+export THREADS_LIST="1 2 4 8 12 16 24 32 48 64 80 96 128 160 192"
+D=$SCRATCH/bench/data; R=$SCRATCH/bench
+H="--cpus-per-task=192 --output=bench-helios-%j.out --error=bench-helios-%j.err"
+# H1: ds_x32, 11 M zdarzeń, 3 powtórzenia, 147 biegów, ~1 h
+H1=$(sbatch --parsable $H -t 03:00:00 \
+     --export=ALL,TESTS=strong,REPEATS_STRONG=3,DS_CORE=$D/ds_x32.root,RESULTS=$R/results-helios-x32 \
+     test/slurm_benchmark.sbatch)
+# H2: 9 kopii, ~100 GB, 2 powtórzenia, 99 biegów, ~45 min
+H2=$(sbatch --parsable $H -t 03:00:00 --dependency=afterany:$H1 \
+     --export=ALL,TESTS=strong,REPEATS_STRONG=2,DS_CORE=$D/lists/size_9.txt,RESULTS=$R/results-helios-c9 \
+     test/slurm_benchmark.sbatch)
+# H3: 32 kopie, ~350 GB, 51 biegów, ~1 h
+H3=$(sbatch --parsable $H -t 04:00:00 --dependency=afterany:$H2 \
+     --export=ALL,TESTS=strong,DS_CORE=$D/lists/size_32.txt,RESULTS=$R/results-helios-c32 \
+     test/slurm_benchmark.sbatch)
+# H4: 1 TB, T1 do 192 wątków + T2 (1 kopia na wątek) do 96, 78 biegów, ~3.5 h
+sbatch $H -t 08:00:00 --dependency=afterany:$H3 \
+     --export=ALL,TESTS="strong weak",WEAK_UNIT=1,WEAK_SERIES="1 2 4 8 16 32 48 64 96" \
+     test/slurm_benchmark.sbatch
+```
+
+Konto i partycja są te same co na Ares (`plgccbmc15-cpu`, `plgrid`), więc przychodzą z `#SBATCH`.
+`SIZE_SERIES="9 32"` sprawia, że każde zadanie pisze `lists/size_9.txt` i `lists/size_32.txt`.
+`MACHINE=helios` trafia do rekordów i do nazwy domyślnego katalogu (`results-helios-big` dla H4).
+Każdy rekord ma też pole `node` (nazwa węzła ze Slurma), a log zawiera `lscpu` i `numactl -H`.
+
+Optimum względem rozmiaru, po skopiowaniu wyników na laptopa:
+
+```bash
+python test/plot_optimum.py --results results-ares results-ares-big \
+    results-helios-x32 results-helios-c9 results-helios-c32 results-helios-big --out results-helios-big
+```
+
 ## Uruchomienie lokalnie
 
 ```bash
@@ -404,6 +458,7 @@ pozwala podać mniejsze wejście.
 | `10_cores_busy.png` | ile rdzeni pracowało w pętli, pełny plik i slim | T1, T6 |
 | `11_file_width.png` | czas pętli, przyspieszenie i RSS: pełny schemat vs slim | T6 |
 | `13_input_size.png` | szczyt RSS i czas całkowity (setup + JIT + pętla) względem rozmiaru wejścia w GB, RDF / uproot / Python | `size`, `sizepy` |
+| `14_optimum_vs_size.png` | optymalna liczba wątków względem liczby zdarzeń, z kilku katalogów wyników (`plot_optimum.py`): dopasowane $n^*=\sqrt{a/b}$ z $T(n)=c+a/n+b\,n$, najszybszy zmierzony punkt, linia $\propto\sqrt{N}$ i liczba rdzeni maszyn | T1 |
 
 Przy `DATASET=big` nie ma biegów T5, więc wykres 08 powstaje z największego punktu serii
 rozmiarów (9 kopii, ~98 GB). Na konsolę trafiają też nachylenia z serii (GB RSS i sekundy na
@@ -413,8 +468,10 @@ Wąsy na wykresach 01–04 i 09–11 to min–max z powtórzeń, punkt to median
 
 Obok wykresów powstaje `table_scalability_<test>.tex` (`filter`, `chain`, `efficiency`), czyli
 tabela skalowalności z pracy (`tab:scalability`) liczona z T1: czas pętli przy `ImplicitMT(n)`,
-przepustowość, przyspieszenie i efektywność względem `ImplicitMT(1)` oraz CPU% całego procesu
-z GNU time. Podpis sam podaje liczbę zdarzeń, wejście, liczbę powtórzeń, zimny odczyt i maksimum.
+przepustowość, przyspieszenie i efektywność względem `ImplicitMT(1)` oraz dwie kolumny CPU.
+„CPU loop” to CPU samej pętli przez jej czas, czyli to samo okno co kolumna czasu. „CPU process”
+to CPU% całego procesu z GNU time, razem z jednowątkowym setupem i JIT. Na 1 TB przy 48 wątkach
+to 3138% wobec 1403%. Podpis sam podaje liczbę zdarzeń, wejście, liczbę powtórzeń, zimny odczyt i maksimum.
 Powstaje też przy `--csv-only`.
 
 Na konsolę trafiają też: frakcja szeregowa $s$ z Amdahla, $\sigma$ i $\kappa$ z USL,
@@ -436,10 +493,11 @@ T1 t0” różnicę między identycznymi biegami RDF z T5 i z T1.
 | `WEAK_PATTERN` | `ds_x%s.root` / `weak_%s.txt` | wejście T2, `%s` = N |
 | `WEAK_SLIM_PATTERN` | `ds_x%s_slim.root` / `weak_%s_slim.txt` | wejście T2S, tworzone automatycznie |
 | `PIN_CORE` | `2` | rdzeń, do którego `taskset` przypina T5 (bez `taskset`: bez przypięcia, z ostrzeżeniem) |
-| `RESULTS` | `test/results` | katalog wyjściowy |
-| `MACHINE` | `local` | trafia do każdego rekordu |
+| `RESULTS` | `test/results` (w `slurm_benchmark.sbatch`: `$SCRATCH/bench/results-$MACHINE[-big\|-real]`) | katalog wyjściowy |
+| `MACHINE` | `local` (w `slurm_benchmark.sbatch`: `ares`) | trafia do każdego rekordu |
 | `THREADS_LIST` | `1 2 4 8 12 16 24 32 48` | sweep wątków w T1 i T6 |
 | `WEAK_SERIES` | `1 2 4 8 16 32` / `1 2 4 8 16 32 48` | N w T2 |
+| `WEAK_UNIT` | `2` | kopii na wątek w punkcie T2 (tylko `big`): `weak_N.txt` ma `WEAK_UNIT`·N kopii |
 | `CHAIN_LENS` | `1 3 5` | długości łańcucha w T4 |
 | `TESTS` | wszystkie / `strong weak qstruct size` dla `big` | które eksperymenty biegną |
 | `SIZE_SERIES` | `1 2 4 6 8 9` | liczby kopii w `size` i `sizepy` (tylko `big`) |

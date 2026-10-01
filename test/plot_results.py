@@ -26,7 +26,7 @@ CSV_FIELDS = [
     "peak_rss_kb", "rss_baseline_kb",
     "peak_rss_net_kb", "time_maxrss_kb", "cpu_percent", "elapsed_s", "cpu_loop",
     "cores_busy_loop", "events_per_s", "tracks_per_s", "event_loops", "exit_code", "timeout_s",
-    "pinned_core", "cpus_allowed", "os_threads", "root_version", "uproot_version",
+    "pinned_core", "cpus_allowed", "os_threads", "root_version", "uproot_version", "node",
 ]
 
 
@@ -953,9 +953,12 @@ def scalability_table(records, test):
 
     Same definitions as the hand-written original, so a new campaign drops in unchanged: time is
     the event-loop wall time under ImplicitMT(n), speedup and efficiency are against
-    ImplicitMT(1), throughput is events over that loop time, and CPU is GNU time's whole-process
-    figure, which the caption compares with the nominal 100n%. Returns None when the sweep has
-    no records for this test.
+    ImplicitMT(1), and throughput is events over that loop time. There are two CPU columns.
+    CPU loop is the event loop's own CPU time over its wall time, the same window as the time
+    column. CPU process is GNU time's whole-process figure, which also counts the
+    single-threaded setup and JIT: on 1 TB that is ~48 s against a ~43 s loop at 48 threads,
+    so it reads less than half of what the loop actually used. Returns None when the sweep
+    has no records for this test.
     """
     rows = scalability_rows(records, test)
     if not rows:
@@ -963,6 +966,11 @@ def scalability_table(records, test):
     ok = [r for r in records if r.get("status") == "ok" and r.get("test") == test]
     n_events = median([r["n_events"] for r in ok if r.get("n_events")])
     cpu = {key[0]: value[0] for key, value in aggregate(ok, ("threads",), "cpu_percent").items()}
+    loop_cpu = defaultdict(list)
+    for r in ok:
+        busy = cores_busy(r)
+        if busy is not None and r.get("threads"):
+            loop_cpu[r["threads"]].append(100 * busy)
     best = max(rows, key=lambda row: row["speedup"])
     inputs = sorted({r.get("input") for r in ok if r.get("input")})
     machines = sorted({r.get("machine") for r in ok if r.get("machine")})
@@ -977,12 +985,14 @@ def scalability_table(records, test):
         seconds, threads = row["seconds"], row["threads"]
         throughput = n_events / seconds / 1e6 if n_events else None
         cpu_text = f"{cpu[threads]:.0f}\\%" if cpu.get(threads) is not None else "--"
+        loop_text = (f"{median(loop_cpu[threads]):.0f}\\%" if loop_cpu.get(threads) else "--")
         body.append(" & ".join([
             f"{threads:>2}",
             bold(row, f"{seconds:.2f}"),
             bold(row, f"{throughput:.2f}") if throughput is not None else "--",
             bold(row, f"{row['speedup']:.2f}"),
             f"{row['efficiency'] * 100:.0f}\\%",
+            loop_text,
             cpu_text,
         ]) + r" \\")
 
@@ -1001,8 +1011,9 @@ def scalability_table(records, test):
         f"Parallel scalability metrics for the {CORE_TEST_LABEL[test].replace('5-', 'five-')} "
         f"on {events} (\\texttt{{{source}}}), {where} "
         f"({median_note}{cache_note}speedup against \\texttt{{ImplicitMT}} with one thread). "
-        f"Nominal CPU utilisation for $n$ threads is $100n\\%$, so the final column shows how "
-        f"far below saturation the execution remains. The speedup maximum at "
+        f"Nominal CPU utilisation for $n$ threads is $100n\\%$. CPU loop covers the same "
+        f"event-loop window as the time column; CPU process is the whole-process figure, which "
+        f"also includes the single-threaded setup and JIT. The speedup maximum at "
         f"{best['threads']} threads coincides with a parallel efficiency of only "
         f"${best['efficiency'] * 100:.0f}\\%$."
     )
@@ -1011,9 +1022,9 @@ def scalability_table(records, test):
         r"\centering",
         rf"\caption{{{caption}}}",
         rf"\label{{tab:scalability-{test}}}",
-        r"\begin{tabular}{rrrrrr}",
+        r"\begin{tabular}{rrrrrrr}",
         r"\toprule",
-        r"Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & CPU \\",
+        r"Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & CPU loop & CPU process \\",
         r"\midrule",
         *body,
         r"\bottomrule",

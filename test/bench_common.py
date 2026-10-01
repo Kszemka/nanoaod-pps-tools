@@ -277,6 +277,9 @@ class Bench:
             # On disk, compressed: the size a reader would quote for the dataset.
             "input_bytes": sum(os.path.getsize(f) for f in input_files(args.input)),
             "machine": os.environ.get("MACHINE", "local"),
+            # The cluster's node, so that an odd point can be traced to a different node of
+            # the same partition. None outside Slurm.
+            "node": os.environ.get("SLURMD_NODENAME"),
             "storage": os.environ.get("STORAGE", "lustre"),
             # "cold" means run_benchmark.sh evicted the inputs' pages before this run, so the
             # loop read them from the file system rather than from RAM.

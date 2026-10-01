@@ -51,6 +51,17 @@
 #
 # RESUME=1 also restarts either job after it ran out of wall clock: only the missing runs go.
 #
+# Helios (192 cores/node, ~386 GB, partition plgrid): the same file, with the core count and
+# the log names given on the command line and MACHINE, THREADS_LIST and RESULTS in the
+# environment. Four jobs in a chain, T1 on 11 M, 100 M, 355 M and 1065 M events, the last
+# with T2 at one copy per thread (192 threads at two would need 384 copies, 4 TB):
+#   export MACHINE=helios DATASET=big SIZE_SERIES="9 32"
+#   export THREADS_LIST="1 2 4 8 12 16 24 32 48 64 80 96 128 160 192"
+#   H="--cpus-per-task=192 --output=bench-helios-%j.out --error=bench-helios-%j.err"
+#   H1=$(sbatch --parsable $H -t 03:00:00 --export=ALL,TESTS=strong,REPEATS_STRONG=3,\
+#   DS_CORE=$SCRATCH/bench/data/ds_x32.root,RESULTS=$SCRATCH/bench/results-helios-x32 test/slurm_benchmark.sbatch)
+#   ... (test/README.md, "Helios", has all four)
+#
 # STORAGE=memfs copies DATA_DIR into the job's RAM disk before the campaign, so the same runs
 # read no byte from Lustre. The difference against the default campaign is what the shared
 # file system costs. -C memfs has to be given on the command line: a #SBATCH line here would
@@ -58,7 +69,7 @@
 
 set -euo pipefail
 
-export MACHINE=ares
+export MACHINE="${MACHINE:-ares}"
 export SCRATCH_BENCH="${SCRATCH}/bench"
 # Without this micromamba looks for environments under $HOME instead of the one on scratch.
 export MAMBA_ROOT_PREFIX="${SCRATCH_BENCH}/micromamba"
@@ -78,7 +89,9 @@ cd "${SCRATCH_BENCH}/nanoaod-pps-tools"
 # before it starts is that the process can actually reach 48 cores. Printed in full because
 # the CPU model and the SMT setting both belong in the thesis and neither is worth guessing.
 echo "=== allocation ==="
+echo "node               : $(hostname) (${MACHINE})"
 lscpu | grep -E 'Model name|^CPU\(s\)|Thread\(s\) per core|Core\(s\) per socket|Socket|NUMA node\(s\)'
+numactl -H 2>/dev/null || true
 echo "SLURM_CPUS_ON_NODE : ${SLURM_CPUS_ON_NODE:-unset}"
 echo "SLURM_CPUS_PER_TASK: ${SLURM_CPUS_PER_TASK:-unset}"
 echo "nproc              : $(nproc)"
@@ -96,23 +109,23 @@ echo
 
 export PY="$(command -v python)"
 export DATASET="${DATASET:-synthetic}"
-export THREADS_LIST="1 2 4 8 12 16 24 32 48"
+export THREADS_LIST="${THREADS_LIST:-1 2 4 8 12 16 24 32 48}"
 export RUN_TIMEOUT=2400
 case "$DATASET" in
     real)
         export DATA_DIR="${SCRATCH_BENCH}/real"
-        export RESULTS="${SCRATCH_BENCH}/results-ares-real"
+        export RESULTS="${RESULTS:-${SCRATCH_BENCH}/results-${MACHINE}-real}"
         ;;
     big)
         # ds_1..ds_96.root next to ds_x32.root, made beforehand by make_bigset.sh.
         export DATA_DIR="${SCRATCH_BENCH}/data"
-        export RESULTS="${SCRATCH_BENCH}/results-ares-big"
+        export RESULTS="${RESULTS:-${SCRATCH_BENCH}/results-${MACHINE}-big}"
         # The longest run is the Python chain on 9 copies, ~2.5 h plus its cold read.
         export RUN_TIMEOUT=14400
         ;;
     *)
         export DATA_DIR="${SCRATCH_BENCH}/data"
-        export RESULTS="${SCRATCH_BENCH}/results-ares"
+        export RESULTS="${RESULTS:-${SCRATCH_BENCH}/results-${MACHINE}}"
         ;;
 esac
 

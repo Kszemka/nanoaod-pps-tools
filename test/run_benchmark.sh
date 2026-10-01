@@ -172,15 +172,18 @@ case "$DATASET" in
         WEAK_SLIM_PATTERN="${WEAK_SLIM_PATTERN:-lists/weak_%s_slim.txt}"
         SIZE_PATTERN="${SIZE_PATTERN:-lists/size_%s.txt}"
         WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32 48}"
+        # Copies per thread at each weak point. 2 on Ares, where 48 threads x 2 is the whole
+        # set; 1 on Helios, where 96 threads x 1 is, and 192 threads at 2 would need 4 TB.
+        WEAK_UNIT="${WEAK_UNIT:-2}"
         if has_test slim || has_test weakslim; then
             echo "ERROR: DATASET=big has no slim copies; TESTS=slim/weakslim run on ds_x32." >&2
             exit 1
         fi
-        # 2N copies at N threads: without them the largest weak points would reuse files and
-        # stop being a weak-scaling series.
+        # WEAK_UNIT x N distinct copies at N threads: without them the largest weak points
+        # would reuse files and stop being a weak-scaling series.
         for n in $WEAK_SERIES; do
-            if [[ $((2 * n)) -gt "$BIG_COPIES" ]]; then
-                echo "ERROR: weak point $n needs $((2 * n)) copies, BIG_COPIES is $BIG_COPIES." >&2
+            if [[ $((WEAK_UNIT * n)) -gt "$BIG_COPIES" ]]; then
+                echo "ERROR: weak point $n needs $((WEAK_UNIT * n)) copies, BIG_COPIES is $BIG_COPIES." >&2
                 exit 1
             fi
         done
@@ -225,12 +228,12 @@ if [[ "$DATASET" == big && -z "${DRY_RUN:-}" ]]; then
     write_big_list core.txt "$BIG_COPIES"
     write_big_list impl.txt "$IMPL_COPIES"
     for n in $WEAK_SERIES; do
-        write_big_list "weak_${n}.txt" $((2 * n))
+        write_big_list "weak_${n}.txt" $((WEAK_UNIT * n))
     done
     for n in $SIZE_SERIES; do
         write_big_list "size_${n}.txt" "$n"
     done
-    echo "lists: $DATA_DIR/lists (core $BIG_COPIES, impl $IMPL_COPIES, weak 2N, size N copies)"
+    echo "lists: $DATA_DIR/lists (core $BIG_COPIES, impl $IMPL_COPIES, weak ${WEAK_UNIT}N, size N copies)"
 fi
 
 # The .root files behind an input: the file itself, or a list's entries with relative paths
