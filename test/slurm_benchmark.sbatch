@@ -57,7 +57,8 @@
 # with T2 at one copy per thread (192 threads at two would need 384 copies, 4 TB):
 #   export MACHINE=helios DATASET=big SIZE_SERIES="9 32"
 #   export THREADS_LIST="1 2 4 8 12 16 24 32 48 64 80 96 128 160 192"
-#   H="--cpus-per-task=192 --output=bench-helios-%j.out --error=bench-helios-%j.err"
+#   # --mem=0 is rejected there: MaxMemPerNode=384000 is below the nodes' 386084+ MB.
+#   H="--cpus-per-task=192 --mem=384000 --output=bench-helios-%j.out --error=bench-helios-%j.err"
 #   H1=$(sbatch --parsable $H -t 03:00:00 --export=ALL,TESTS=strong,REPEATS_STRONG=3,\
 #   DS_CORE=$SCRATCH/bench/data/ds_x32.root,RESULTS=$SCRATCH/bench/results-helios-x32 test/slurm_benchmark.sbatch)
 #   ... (test/README.md, "Helios", has all four)

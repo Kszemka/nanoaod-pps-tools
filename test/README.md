@@ -397,7 +397,7 @@ cd $SCRATCH/bench/nanoaod-pps-tools
 export MACHINE=helios DATASET=big SIZE_SERIES="9 32"
 export THREADS_LIST="1 2 4 8 12 16 24 32 48 64 80 96 128 160 192"
 D=$SCRATCH/bench/data; R=$SCRATCH/bench
-H="--cpus-per-task=192 --output=bench-helios-%j.out --error=bench-helios-%j.err"
+H="--cpus-per-task=192 --mem=384000 --output=bench-helios-%j.out --error=bench-helios-%j.err"
 # H1: ds_x32, 11 M zdarzeń, 3 powtórzenia, 147 biegów, ~1 h
 H1=$(sbatch --parsable $H -t 03:00:00 \
      --export=ALL,TESTS=strong,REPEATS_STRONG=3,DS_CORE=$D/ds_x32.root,RESULTS=$R/results-helios-x32 \
@@ -417,6 +417,9 @@ sbatch $H -t 08:00:00 --dependency=afterany:$H3 \
 ```
 
 Konto i partycja są te same co na Ares (`plgccbmc15-cpu`, `plgrid`), więc przychodzą z `#SBATCH`.
+`--mem=384000` zastępuje `--mem=0`: `plgrid` na Heliosie ma `MaxMemPerNode=384000` (MB), mniej niż
+fizyczna pamięć węzła (386084+), więc „cała pamięć” jest odrzucana przy wysyłaniu („Memory required
+by task is not available”).
 `SIZE_SERIES="9 32"` sprawia, że każde zadanie pisze `lists/size_9.txt` i `lists/size_32.txt`.
 `MACHINE=helios` trafia do rekordów i do nazwy domyślnego katalogu (`results-helios-big` dla H4).
 Każdy rekord ma też pole `node` (nazwa węzła ze Slurma), a log zawiera `lscpu` i `numactl -H`.
