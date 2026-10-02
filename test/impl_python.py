@@ -81,20 +81,33 @@ def _step_mask(name, column, rp_id):
         return _any_in(column, [bc.DIAMOND_RP_TYPE])
     if name == "rp_id":
         return _any_in(column, [rp_id])
-    lo, hi = bc.XI_RANGE
+    if name == "single_rp_idx":
+        return _any_in(column, [-1])
+    if name == "multi_proton":
+        return np.asarray(column) > 1
+    if name == "xi":
+        lo, hi = bc.XI_RANGE
+        return _any_where(column, lambda e: (e >= lo) & (e <= hi))
+    if name == "multi_rp_idx":
+        return _any_where(column, lambda e: e >= 0)
+    # time, time_unc, theta_y
+    return _any_where(column, lambda e: e != 0)
+
+
+def _any_where(jagged, predicate):
     return np.fromiter(
-        (bool(((np.asarray(e) >= lo) & (np.asarray(e) <= hi)).any()) for e in column),
+        (bool(predicate(np.asarray(e)).any()) for e in jagged),
         dtype=bool,
-        count=len(column),
+        count=len(jagged),
     )
 
 
-def chain_python(df, chain_len, rp_id=bc.DEFAULT_RP_ID):
+def chain_python(df, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base"):
     # Every column the chain needs is pulled up front -- unlike RDataFrame, there is no way to
     # read the later columns only for the events that survived the earlier filters. All of the
     # filtering happens here too, including the nPPSLocalTrack > 0 step: leaving it to
     # RDataFrame would mean measuring RDataFrame doing part of Python's work.
-    columns = bc.chain_columns(chain_len)
+    columns = bc.chain_columns(chain_len, chain)
     data = df.AsNumpy(columns)
     n_events = len(data[columns[0]])
     counts = [n_events]
@@ -103,7 +116,7 @@ def chain_python(df, chain_len, rp_id=bc.DEFAULT_RP_ID):
     # like-for-like comparison narrows the arrays between steps rather than evaluating every
     # step on every event.
     surviving = np.arange(n_events)
-    for name in bc.chain_steps(chain_len):
+    for name in bc.chain_steps(chain_len, chain):
         column = data[bc.CHAIN_COLUMNS[name]]
         surviving = surviving[_step_mask(name, column[surviving], rp_id)]
         counts.append(len(surviving))

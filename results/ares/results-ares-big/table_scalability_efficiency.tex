@@ -1,20 +1,20 @@
 \begin{table}[htbp]
 \centering
-\caption{Parallel scalability metrics for the efficiency column on $1.07$ billion events (\texttt{core.txt}), measured on Ares (single run, inputs evicted from the page cache before every run, speedup against \texttt{ImplicitMT} with one thread). Nominal CPU utilisation for $n$ threads is $100n\%$. CPU loop covers the same event-loop window as the time column; CPU process is the whole-process figure, which also includes the single-threaded setup and JIT. The speedup maximum at 48 threads coincides with a parallel efficiency of only $47\%$.}
+\caption{Parallel scalability metrics for the efficiency column on $1.07$ billion events (\texttt{core.txt}), measured on Ares (single run, inputs evicted from the page cache before every run, speedup against \texttt{ImplicitMT} with one thread). Cores busy is the event loop's CPU time over its wall time, measured in the same window as the time column, so it is directly comparable to the thread count. The speedup maximum at 48 threads coincides with a parallel efficiency of only $47\%$.}
 \label{tab:scalability-efficiency}
-\begin{tabular}{rrrrrrr}
+\begin{tabular}{rrrrrr}
 \toprule
-Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & CPU loop & CPU process \\
+Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & Cores busy \\
 \midrule
- 1 & 806.68 & 1.32 & 1.00 & 100\% & 81\% & 80\% \\
- 2 & 419.91 & 2.54 & 1.92 & 96\% & 161\% & 152\% \\
- 4 & 230.64 & 4.62 & 3.50 & 87\% & 322\% & 276\% \\
- 8 & 122.99 & 8.66 & 6.56 & 82\% & 640\% & 463\% \\
-12 & 93.02 & 11.45 & 8.67 & 72\% & 930\% & 608\% \\
-16 & 73.05 & 14.58 & 11.04 & 69\% & 1276\% & 749\% \\
-24 & 53.39 & 19.96 & 15.11 & 63\% & 1850\% & 922\% \\
-32 & 42.81 & 24.89 & 18.84 & 59\% & 2302\% & 1033\% \\
-48 & \textbf{35.67} & \textbf{29.87} & \textbf{22.61} & 47\% & 2848\% & 1119\% \\
+ 1 & 806.68 & 1.32 & 1.00 & 100\% & 0.8 \\
+ 2 & 419.91 & 2.54 & 1.92 & 96\% & 1.6 \\
+ 4 & 230.64 & 4.62 & 3.50 & 87\% & 3.2 \\
+ 8 & 122.99 & 8.66 & 6.56 & 82\% & 6.4 \\
+12 & 93.02 & 11.45 & 8.67 & 72\% & 9.3 \\
+16 & 73.05 & 14.58 & 11.04 & 69\% & 12.8 \\
+24 & 53.39 & 19.96 & 15.11 & 63\% & 18.5 \\
+32 & 42.81 & 24.89 & 18.84 & 59\% & 23.0 \\
+48 & \textbf{35.67} & \textbf{29.87} & \textbf{22.61} & 47\% & 28.5 \\
 \bottomrule
 \end{tabular}
 \end{table}

@@ -20,9 +20,10 @@ from collections import defaultdict
 
 CSV_FIELDS = [
     "label", "status", "schema_version", "machine", "storage", "cache", "test", "impl", "mode", "threads",
-    "chain_len", "tag", "input", "input_bytes", "n_events",
+    "chain", "chain_len", "tag", "input", "input_bytes", "n_events",
     "n_tracks", "wall_setup", "wall_warmup", "wall_jit", "wall_loop", "wall_fixed",
     "bytes_setup", "bytes_warmup", "bytes_jit", "bytes_loop", "bytes_total",
+    "io_rchar_loop", "io_read_bytes_loop",
     "peak_rss_kb", "rss_baseline_kb",
     "peak_rss_net_kb", "time_maxrss_kb", "cpu_percent", "elapsed_s", "cpu_loop",
     "cores_busy_loop", "events_per_s", "tracks_per_s", "event_loops", "exit_code", "timeout_s",
@@ -182,7 +183,8 @@ def check_results_agree(records):
 # The integer every implementation of a test reports. Per-step counts and float sums are left
 # out: only some implementations report the former, and the latter differ in float32/float64
 # accumulation between RDataFrame and numpy.
-IMPL_ANSWER = {"filter": "events_passed", "chain": "events_passed", "efficiency": "eff_hits"}
+IMPL_ANSWER = {"filter": "events_passed", "chain": "events_passed", "chain11": "events_passed",
+               "efficiency": "eff_hits"}
 
 
 def check_impls_agree(records):
@@ -206,9 +208,19 @@ def check_impls_agree(records):
 CORE_TEST_LABEL = {
     "filter": "single filter",
     "chain": "5-filter chain",
+    "chain11": "11-filter chain",
     "efficiency": "efficiency column",
 }
-CORE_TEST_COLOUR = {"filter": "#4575b4", "chain": "#1b7837", "efficiency": "#d73027"}
+CORE_TEST_COLOUR = {"filter": "#4575b4", "chain": "#1b7837", "chain11": "#762a83",
+                    "efficiency": "#d73027"}
+
+# Thread counts labelled on a log2 axis. Every measured count keeps its tick, but between 64
+# and 192 the labels of 80, 88, ..., 176 would run into each other.
+LABELLED_THREADS = {1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128, 192, 256, 384}
+
+
+def thread_labels(ticks):
+    return [str(t) if t in LABELLED_THREADS else "" for t in ticks]
 
 
 def core_rows(records, experiment):
@@ -304,6 +316,13 @@ def plot_core(ok, results_dir, plt, save, outputs):
                       f"{cost.get('bytes_mb', float('nan')):+.2f} MB read, "
                       f"{cost.get('cpu_s', float('nan')):+.3f} CPU-s in the loop")
 
+    # The 1 TB slim campaign is sized by what its chain reads, so that is checked on every run.
+    for test in CORE_TEST_LABEL:
+        read = [r["bytes_loop"] for r in strong if r.get("test") == test and r.get("bytes_loop")]
+        if read:
+            print(f"  read in the loop [{test}]: {min(read) / 1e9:.1f}-{max(read) / 1e9:.1f} GB "
+                  f"over {len(read)} runs")
+
     # T5's RDataFrame runs are the same configuration as T1's t0 runs. A gap between the two is
     # a property of when T5 ran, not of the implementation.
     rdf_impl = {"filter": "rdf", "chain": "rdf-lazy", "efficiency": "jit"}
@@ -316,20 +335,46 @@ def plot_core(ok, results_dir, plt, save, outputs):
 
     ticks = sorted({r["threads"] for r in strong + weak + weak_slim + slim}) or [1]
 
-    def thread_axis(ax):
-        ax.set_xscale("log", base=2)
-        ax.set_xticks(ticks)
-        ax.set_xticklabels([str(t) for t in ticks])
-        ax.minorticks_off()
+    # Ideal scaling is the diagonal on log-log and on linear-linear alike, but on a log thread
+    # axis the 1-64 range -- where every curve still follows the diagonal and there is nothing
+    # to read -- takes 79% of the width and leaves the plateau above 100 threads with 12%.
+    # Sweeps that stop at 48 threads keep the log axis: their maximum sits low enough that a
+    # linear axis would squash it against the left edge instead.
+    thread_scale = os.environ.get("THREAD_SCALE", "linear" if max(ticks) >= 96 else "log")
+
+    def even_ticks(hi):
+        step = next(s for s in (1, 2, 4, 8, 16, 32, 64) if hi / s <= 8)
+        return list(range(0, int(hi) + 1, step))
+
+    def thread_axis(ax, marks=None):
+        marks = marks or ticks
+        if thread_scale == "linear":
+            ax.set_xscale("linear")
+            ax.set_xticks(even_ticks(max(marks)))
+            ax.set_xlim(0, max(marks) * 1.02)
+        else:
+            ax.set_xscale("log", base=2)
+            ax.set_xticks(marks)
+            ax.set_xticklabels(thread_labels(marks))
+            ax.minorticks_off()
         ax.set_xlabel("threads")
 
-    # Speedup goes on a log axis to match the thread axis, so ideal scaling is the diagonal.
-    # On a linear y the ideal line curves away exponentially and takes the whole figure with
-    # it: the measured curves, which are the subject, end up squashed against the bottom.
+    # Must run after the data is plotted: on a linear axis the ideal line is excluded from the
+    # range, or it would stretch the axis to 192 while the measured speedup peaks near 60.
     def speedup_axis(ax, marks):
-        ax.set_yscale("log", base=2)
-        ax.set_yticks(marks)
-        ax.set_yticklabels([str(t) for t in marks])
+        if thread_scale == "linear":
+            ax.set_yscale("linear")
+            measured = [float(v) for line in ax.get_lines()
+                        if line.get_color() != "#bbbbbb"
+                        for v in line.get_ydata() if v is not None and float(v) == float(v)]
+            if measured:
+                top = max(measured) * 1.08
+                ax.set_ylim(0, top)
+                ax.set_yticks(even_ticks(top))
+        else:
+            ax.set_yscale("log", base=2)
+            ax.set_yticks(marks)
+            ax.set_yticklabels(thread_labels(marks))
         ax.set_ylabel(r"speedup $S(n) = T(1)\,/\,T(n)$")
 
     # (1) Strong scaling: the same events, more threads. Amdahl applies here and only
@@ -344,18 +389,33 @@ def plot_core(ok, results_dir, plt, save, outputs):
                 plot_rows(ax, rows[test], "speedup", pretty, color=CORE_TEST_COLOUR[test])
         ax.plot(ticks, ticks, ls="-", lw=1, color="#bbbbbb", label="ideal ($S = n$)")
 
-        if rows["chain"]:
-            measured = [(r["threads"], r["speedup"]) for r in rows["chain"]]
+        # The models are fitted to one curve: the 5-filter chain, or the 11-filter one in a
+        # campaign that ran only that.
+        fit_test = "chain" if rows["chain"] else "chain11"
+        if rows[fit_test]:
+            measured = [(r["threads"], r["speedup"]) for r in rows[fit_test]]
             grid = [t for t in range(1, max(ticks) + 1)]
+            lowest = min(n for n, _ in measured)
+        if rows[fit_test] and lowest > 1:
+            # Both models are anchored at S(1) = 1. A sweep that starts at 64 threads (run2,
+            # the refinement of the plateau) normalises to S(64) = 1 instead, and the fit then
+            # describes the wrong curve -- sigma pinned to the end of its range. Merge such a
+            # sweep with the one holding the low-thread points before fitting.
+            print(f"  no 1-thread point (lowest is {lowest}): skipping the Amdahl and USL fits")
+        elif rows[fit_test]:
             fitted_s = fit_amdahl(measured)
             sigma, kappa = fit_usl(measured)
+            # kappa falls below 1e-4 once the sweep reaches hundreds of threads; a fixed 4-digit
+            # format prints it as 0.0000, which reads as "no coherency term" -- the opposite of
+            # what the fit found.
+            kappa_label = f"{kappa:.4f}" if kappa >= 1e-3 else f"{kappa:.1e}"
             ax.plot(grid, [1 / (fitted_s + (1 - fitted_s) / n) for n in grid], ls="--", lw=1.6,
                     color="#888888", label=f"Amdahl, $s$={fitted_s:.3f}")
             ax.plot(grid, [n / (1 + sigma * (n - 1) + kappa * n * (n - 1)) for n in grid],
                     ls=":", lw=1.8, color="#333333",
-                    label=fr"USL, $\sigma$={sigma:.3f}, $\kappa$={kappa:.4f}")
+                    label=fr"USL, $\sigma$={sigma:.3f}, $\kappa$={kappa_label}")
             print(f"  Amdahl serial fraction s = {fitted_s:.4f} (ceiling {1 / fitted_s:.2f}x)")
-            print(f"  USL sigma = {sigma:.4f}, kappa = {kappa:.5f}")
+            print(f"  USL sigma = {sigma:.4f}, kappa = {kappa:.6f}")
             if kappa > 0:
                 peak = ((1 - sigma) / kappa) ** 0.5
                 ax.axvline(peak, color="#333333", ls=":", lw=1, alpha=0.5)
@@ -430,10 +490,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
         weak_ticks = sorted({r["threads"] for r in weak + weak_slim if r.get("threads")}) or ticks
         ax_s.plot(weak_ticks, weak_ticks, lw=1, color="#bbbbbb", label="ideal ($S = n$)")
         for ax in (ax_t, ax_s):
-            ax.set_xscale("log", base=2)
-            ax.set_xticks(weak_ticks)
-            ax.set_xticklabels([str(t) for t in weak_ticks])
-            ax.minorticks_off()
+            thread_axis(ax, weak_ticks)
             ax.set_xlabel("threads (N threads on N units of work)")
             ax.legend(fontsize=8)
             ax.grid(alpha=0.3, which="both")
@@ -571,7 +628,9 @@ def plot_core(ok, results_dir, plt, save, outputs):
                            ha="left" if total <= right else "right",
                            color="black" if total <= right else "white")
             ax_ph.grid(alpha=0.3, axis="x")
-        impl_input = impls[0].get("input", "one input")
+        impl_events = impls[0].get("n_events")
+        impl_input = (f"{impl_events / 1e6:.1f} million events" if impl_events
+                      else impls[0].get("input", "one input"))
         axes[0][0].set_title(f"Event-loop throughput on {impl_input}, one core")
         axes[0][1].set_title("Wall time per query")
         axes[-1][1].legend(*axes[0][1].get_legend_handles_labels(), fontsize=8,
@@ -689,8 +748,12 @@ def plot_input_size(records, plt, save):
     others do not: setup plus cling JIT, once per process. Failed runs have no record here, so a
     line that stops short is where that implementation ran out of memory or time.
     """
-    fig, axes = plt.subplots(2, len(CORE_TEST_LABEL), figsize=(15, 8), squeeze=False)
-    for column, (test, pretty) in enumerate(CORE_TEST_LABEL.items()):
+    tests = {t: pretty for t, pretty in CORE_TEST_LABEL.items()
+             if any(r.get("test") == t for r in records)}
+    if not tests:
+        return
+    fig, axes = plt.subplots(2, len(tests), figsize=(5 * len(tests), 8), squeeze=False)
+    for column, (test, pretty) in enumerate(tests.items()):
         by_impl = defaultdict(list)
         for r in records:
             if r.get("test") != test or not r.get("input_bytes"):
@@ -843,13 +906,26 @@ def plot_rss_profile(results_dir, plt, name="12_rss_over_time.png", prefix=None)
 
 
 def fit_amdahl(points):
-    """Serial fraction s minimising relative error of S(n) = 1 / (s + (1 - s) / n)."""
-    best = (float("inf"), 0.0)
-    for step in range(1, 2000):
-        s = step / 2000
-        error = sum((1 / (s + (1 - s) / n) / measured - 1) ** 2 for n, measured in points)
-        best = min(best, (error, s))
-    return best[1]
+    """
+    Serial fraction s minimising relative error of S(n) = 1 / (s + (1 - s) / n).
+
+    Refined the same way as fit_usl: the quoted ceiling is 1/s, so a step that is harmless for
+    s = 0.26 moves the ceiling by several speedup units once s falls to ~0.009 on the 1 TB
+    sweeps.
+    """
+    def error_of(s):
+        return sum((1 / (s + (1 - s) / n) / measured - 1) ** 2 for n, measured in points)
+
+    step = 1 / 2000
+    best = min((error_of(i * step), i * step) for i in range(1, 2000))
+    s = best[1]
+    for _ in range(3):
+        lo = max(step / 50, s - step)
+        step /= 50
+        best = min([(error_of(s), s)] + [(error_of(lo + i * step), lo + i * step)
+                                         for i in range(101)])
+        s = best[1]
+    return s
 
 
 def fit_usl(points):
@@ -859,17 +935,44 @@ def fit_usl(points):
     Amdahl's law is this with kappa = 0, and it cannot bend back down: it is monotonic in n for
     any serial fraction. The measured curves do bend down, so what the fit establishes is not
     goodness of match but that kappa is distinguishable from zero.
+
+    Coarse-to-fine rather than one fixed grid: kappa scales like 1/n^2, so the value that fits
+    a 192-thread sweep over 1 TB (~2.5e-5) is smaller than a single step of a grid coarse
+    enough for the 48-thread ones (5e-5). On a fixed grid it snaps to kappa = 0, and the fit
+    silently degenerates into Amdahl's law -- no knee, N* = infinity, and a curve that misses
+    the measured plateau.
+
+    The first pass keeps the original grid. Starting coarser and refining is what an optimiser
+    would do, but the error surface has local minima along sigma, and a sparser first pass
+    picks the wrong basin on the mid-sized sweeps.
     """
+    def error_of(sigma, kappa):
+        return sum((n / (1 + sigma * (n - 1) + kappa * n * (n - 1)) / measured - 1) ** 2
+                   for n, measured in points)
+
+    sigma_step, kappa_step = 1 / 1000, 1 / 20000
     best = (float("inf"), 0.0, 0.0)
-    for sigma_step in range(0, 400):
-        sigma = sigma_step / 1000
-        for kappa_step in range(0, 400):
-            kappa = kappa_step / 20000
-            error = sum((n / (1 + sigma * (n - 1) + kappa * n * (n - 1)) / measured - 1) ** 2
-                        for n, measured in points)
+    for i in range(400):
+        for j in range(400):
+            trial = (i * sigma_step, j * kappa_step)
+            error = error_of(*trial)
             if error < best[0]:
-                best = (error, sigma, kappa)
-    return best[1], best[2]
+                best = (error, *trial)
+    _, sigma, kappa = best
+
+    # Refine inside the winning cell, which brackets the true optimum by construction.
+    for _ in range(3):
+        sigma_lo, kappa_lo = max(0.0, sigma - sigma_step), max(0.0, kappa - kappa_step)
+        sigma_step, kappa_step = sigma_step / 50, kappa_step / 50
+        best = (error_of(sigma, kappa), sigma, kappa)
+        for i in range(101):
+            for j in range(101):
+                trial = (sigma_lo + i * sigma_step, kappa_lo + j * kappa_step)
+                error = error_of(*trial)
+                if error < best[0]:
+                    best = (error, *trial)
+        _, sigma, kappa = best
+    return sigma, kappa
 
 
 def per_thread_cost(records, test):
@@ -943,6 +1046,10 @@ def scalability_rows(records, test, baseline=None):
     return rows
 
 
+# 80-176 are the refinement sweep of the plateau: dropping them hides the region it resolves.
+DEFAULT_TABLE_THREADS = "1 2 4 8 12 16 24 32 48 64 80 88 96 104 112 128 144 160 176 192"
+
+
 def latex_escape(text):
     return str(text).replace("\\", r"\textbackslash{}").replace("_", r"\_").replace("%", r"\%")
 
@@ -953,28 +1060,33 @@ def scalability_table(records, test):
 
     Same definitions as the hand-written original, so a new campaign drops in unchanged: time is
     the event-loop wall time under ImplicitMT(n), speedup and efficiency are against
-    ImplicitMT(1), and throughput is events over that loop time. There are two CPU columns.
-    CPU loop is the event loop's own CPU time over its wall time, the same window as the time
-    column. CPU process is GNU time's whole-process figure, which also counts the
-    single-threaded setup and JIT: on 1 TB that is ~48 s against a ~43 s loop at 48 threads,
-    so it reads less than half of what the loop actually used. Returns None when the sweep
-    has no records for this test.
+    ImplicitMT(1), and throughput is events over that loop time. Cores busy is the event loop's
+    own CPU time over its wall time, the same window as the time column, so it is directly
+    comparable to the thread count. The whole-process CPU figure is deliberately not shown: it
+    also counts the single-threaded setup and JIT, so on 1 TB it reads ~48 s against a ~43 s
+    loop at 48 threads, less than half of what the loop actually used. Returns None when the
+    sweep has no records for this test.
+
+    Rows are limited to TABLE_THREADS (environment, space-separated) plus the fastest point,
+    so a dense sweep around the maximum does not turn the table into twenty lines.
     """
     rows = scalability_rows(records, test)
     if not rows:
         return None
+    best = max(rows, key=lambda row: row["speedup"])
+    shown = {int(n) for n in os.environ.get("TABLE_THREADS", DEFAULT_TABLE_THREADS).split()}
+    rows = [row for row in rows if row["threads"] in shown or row is best]
     ok = [r for r in records if r.get("status") == "ok" and r.get("test") == test]
     n_events = median([r["n_events"] for r in ok if r.get("n_events")])
-    cpu = {key[0]: value[0] for key, value in aggregate(ok, ("threads",), "cpu_percent").items()}
     loop_cpu = defaultdict(list)
     for r in ok:
         busy = cores_busy(r)
         if busy is not None and r.get("threads"):
             loop_cpu[r["threads"]].append(100 * busy)
-    best = max(rows, key=lambda row: row["speedup"])
     inputs = sorted({r.get("input") for r in ok if r.get("input")})
     machines = sorted({r.get("machine") for r in ok if r.get("machine")})
-    repeats = max(aggregate(ok, ("threads",), "wall_loop").values(), key=lambda v: v[3])[3]
+    counts = [v[3] for k, v in aggregate(ok, ("threads",), "wall_loop").items() if k[0]]
+    fewest, repeats = min(counts), max(counts)
     cold = any(r.get("cache") == "cold" for r in ok)
 
     def bold(row, text):
@@ -984,16 +1096,14 @@ def scalability_table(records, test):
     for row in rows:
         seconds, threads = row["seconds"], row["threads"]
         throughput = n_events / seconds / 1e6 if n_events else None
-        cpu_text = f"{cpu[threads]:.0f}\\%" if cpu.get(threads) is not None else "--"
-        loop_text = (f"{median(loop_cpu[threads]):.0f}\\%" if loop_cpu.get(threads) else "--")
+        busy_text = f"{median(loop_cpu[threads]) / 100:.1f}" if loop_cpu.get(threads) else "--"
         body.append(" & ".join([
             f"{threads:>2}",
             bold(row, f"{seconds:.2f}"),
             bold(row, f"{throughput:.2f}") if throughput is not None else "--",
             bold(row, f"{row['speedup']:.2f}"),
             f"{row['efficiency'] * 100:.0f}\\%",
-            loop_text,
-            cpu_text,
+            busy_text,
         ]) + r" \\")
 
     source = ", ".join(latex_escape(name) for name in inputs) or "the core input"
@@ -1005,26 +1115,38 @@ def scalability_table(records, test):
         events = f"${n_events / 1e9:.2f}$ billion events"
     else:
         events = f"${n_events / 1e6:.1f}$ million events"
-    median_note = f"median of {repeats} repeats, " if repeats > 1 else "single run, "
+    if repeats == 1:
+        median_note = "single run, "
+    elif fewest == repeats:
+        median_note = f"median of {repeats} repeats, "
+    else:
+        median_note = f"median of {fewest}--{repeats} repeats per point, "
     cache_note = "inputs evicted from the page cache before every run, " if cold else ""
+    read = [r["bytes_loop"] for r in ok if r.get("threads") and r.get("bytes_loop")]
+    read_note = ""
+    if read:
+        unit, scale = ("TB", 1e12) if max(read) >= 1e12 else ("GB", 1e9)
+        low, high = min(read) / scale, max(read) / scale
+        span = f"{low:.2f}" if f"{low:.2f}" == f"{high:.2f}" else f"{low:.2f}--{high:.2f}"
+        read_note = f" Each run reads {span}~{unit} from disk in the event loop."
     caption = (
         f"Parallel scalability metrics for the {CORE_TEST_LABEL[test].replace('5-', 'five-')} "
         f"on {events} (\\texttt{{{source}}}), {where} "
         f"({median_note}{cache_note}speedup against \\texttt{{ImplicitMT}} with one thread). "
-        f"Nominal CPU utilisation for $n$ threads is $100n\\%$. CPU loop covers the same "
-        f"event-loop window as the time column; CPU process is the whole-process figure, which "
-        f"also includes the single-threaded setup and JIT. The speedup maximum at "
+        f"Cores busy is the event loop's CPU time over its wall time, measured in the same "
+        f"window as the time column, so it is directly comparable to the thread count. "
+        f"The speedup maximum at "
         f"{best['threads']} threads coincides with a parallel efficiency of only "
-        f"${best['efficiency'] * 100:.0f}\\%$."
+        f"${best['efficiency'] * 100:.0f}\\%$.{read_note}"
     )
     return "\n".join([
         r"\begin{table}[htbp]",
         r"\centering",
         rf"\caption{{{caption}}}",
         rf"\label{{tab:scalability-{test}}}",
-        r"\begin{tabular}{rrrrrrr}",
+        r"\begin{tabular}{rrrrrr}",
         r"\toprule",
-        r"Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & CPU loop & CPU process \\",
+        r"Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & Cores busy \\",
         r"\midrule",
         *body,
         r"\bottomrule",

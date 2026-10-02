@@ -111,22 +111,25 @@ echo
 export PY="$(command -v python)"
 export DATASET="${DATASET:-synthetic}"
 export THREADS_LIST="${THREADS_LIST:-1 2 4 8 12 16 24 32 48}"
-export RUN_TIMEOUT=2400
+# DATA_DIR and RUN_TIMEOUT given in --export win over the per-dataset defaults: the 11-filter
+# campaign reads a different directory, and its 1-thread run alone takes ~8-12 h.
 case "$DATASET" in
     real)
-        export DATA_DIR="${SCRATCH_BENCH}/real"
+        export DATA_DIR="${DATA_DIR:-${SCRATCH_BENCH}/real}"
         export RESULTS="${RESULTS:-${SCRATCH_BENCH}/results-${MACHINE}-real}"
+        export RUN_TIMEOUT="${RUN_TIMEOUT:-2400}"
         ;;
     big)
         # ds_1..ds_96.root next to ds_x32.root, made beforehand by make_bigset.sh.
-        export DATA_DIR="${SCRATCH_BENCH}/data"
+        export DATA_DIR="${DATA_DIR:-${SCRATCH_BENCH}/data}"
         export RESULTS="${RESULTS:-${SCRATCH_BENCH}/results-${MACHINE}-big}"
         # The longest run is the Python chain on 9 copies, ~2.5 h plus its cold read.
-        export RUN_TIMEOUT=14400
+        export RUN_TIMEOUT="${RUN_TIMEOUT:-14400}"
         ;;
     *)
-        export DATA_DIR="${SCRATCH_BENCH}/data"
+        export DATA_DIR="${DATA_DIR:-${SCRATCH_BENCH}/data}"
         export RESULTS="${RESULTS:-${SCRATCH_BENCH}/results-${MACHINE}}"
+        export RUN_TIMEOUT="${RUN_TIMEOUT:-2400}"
         ;;
 esac
 

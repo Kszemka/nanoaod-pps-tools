@@ -41,12 +41,19 @@ def compression_algorithm(name):
     return getattr(ROOT.ROOT, name, None) or getattr(ROOT.RCompressionSetting.EAlgorithm, name)
 
 
-def slim_columns():
-    columns = list(bc.CHAIN_COLUMNS.values()) + bc.EFFICIENCY_COLUMNS
+def slim_columns(which="all"):
+    """
+    all      what the three T6 benchmarks read (the 5-filter chain, filter, efficiency)
+    chain11  exactly the 10 branches of the 11-filter chain, so that chain reads the whole file
+             and the size of a set of these files is the volume it reads
+    """
+    if which == "chain11":
+        return bc.chain_columns(len(bc.LONG_CHAIN_STEPS), "long")
+    columns = bc.chain_columns(bc.MAX_CHAIN_LEN) + bc.EFFICIENCY_COLUMNS
     return sorted(set(columns))
 
 
-def slim_file(source, output, autoflush):
+def slim_file(source, output, autoflush, which="all"):
     layout = bc.tree_layout(source)
     options = ROOT.RDF.RSnapshotOptions()
     options.fMode = "RECREATE"
@@ -56,7 +63,7 @@ def slim_file(source, output, autoflush):
     options.fAutoFlush = autoflush or round(layout["entries"] / max(layout["clusters"], 1))
 
     partial = output + ".partial"
-    columns = ROOT.std.vector["std::string"](slim_columns())
+    columns = ROOT.std.vector["std::string"](slim_columns(which))
     ROOT.RDataFrame("Events", source).Snapshot("Events", partial, columns, options)
 
     slim = bc.tree_layout(partial)
@@ -77,6 +84,8 @@ def main():
     parser.add_argument("--output", required=True, help=".root file or .txt list, matching --input")
     parser.add_argument("--autoflush", type=int, default=0,
                         help="entries per cluster; 0 keeps each source's mean cluster size")
+    parser.add_argument("--columns", default="all", choices=["all", "chain11"],
+                        help="all: T6's columns; chain11: the 10 branches of the 11-filter chain")
     args = parser.parse_args()
 
     if bc.is_file_list(args.input) != bc.is_file_list(args.output):
@@ -85,7 +94,7 @@ def main():
 
     try:
         if not bc.is_file_list(args.input):
-            slim_file(args.input, args.output, args.autoflush)
+            slim_file(args.input, args.output, args.autoflush, args.columns)
             return 0
 
         slim_dir = os.path.join(os.path.dirname(os.path.abspath(args.output)), "slim")
@@ -94,7 +103,7 @@ def main():
         for source in bc.input_files(args.input):
             output = os.path.join(slim_dir, os.path.basename(source))
             if not os.path.exists(output):
-                slim_file(source, output, args.autoflush)
+                slim_file(source, output, args.autoflush, args.columns)
             outputs.append(os.path.relpath(output, os.path.dirname(os.path.abspath(args.output))))
     except (OSError, RuntimeError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

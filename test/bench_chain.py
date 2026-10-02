@@ -4,6 +4,9 @@ TEST 2 -- filter chain: eager vs lazy vs Report() evaluation, and RDataFrame vs 
 
 --chain-len sweeps how many filters the query applies. rdf-eager reads a count after every
 filter (chain_len + 1 event loops); rdf-lazy and rdf-report need one.
+
+--chain long selects the 11-filter chain over 10 branches of the 1 TB slim campaign; its records
+are test "chain11", so they never mix with the 5-filter chain's.
 """
 
 import bench_common as bc
@@ -13,15 +16,18 @@ def main():
     parser = bc.build_parser(
         __doc__, impls=["rdf-lazy", "rdf-eager", "rdf-report", "python", "uproot"]
     )
-    parser.add_argument(
-        "--chain-len",
-        type=int,
-        default=bc.MAX_CHAIN_LEN,
-        choices=range(1, bc.MAX_CHAIN_LEN + 1),
-    )
+    parser.add_argument("--chain", default="base", choices=sorted(bc.CHAINS))
+    parser.add_argument("--chain-len", type=int, default=None,
+                        help="number of filters; default: the whole chain")
     args = parser.parse_args()
+    steps = bc.CHAINS[args.chain]
+    if args.chain_len is None:
+        args.chain_len = len(steps)
+    if not 1 <= args.chain_len <= len(steps):
+        parser.error(f"--chain-len must be 1..{len(steps)} for --chain {args.chain}")
 
-    bench = bc.Bench(args, "chain")
+    bench = bc.Bench(args, "chain" if args.chain == "base" else "chain11")
+    bench.record["chain"] = args.chain
     bench.record["chain_len"] = args.chain_len
     is_rdf = args.impl.startswith("rdf-")
     if not is_rdf:
@@ -36,7 +42,7 @@ def main():
         with bench.phase("warmup"):
             bc.warmup(args, lambda d: impl_rdf.trigger_chain_lazy(
                 impl_rdf.build_chain_lazy(
-                    impl_rdf.build_chain_nodes(d, args.chain_len, args.rp_id)
+                    impl_rdf.build_chain_nodes(d, args.chain_len, args.rp_id, args.chain)
                 )
             ))
 
@@ -52,24 +58,25 @@ def main():
         # behaviour under study, not an artefact -- see impl_rdf.trigger_chain_eager.
         bench.record["graph_interleaved"] = True
         with bench.phase("loop"):
-            result = impl_rdf.trigger_chain_eager(df, args.chain_len, args.rp_id)
+            result = impl_rdf.trigger_chain_eager(df, args.chain_len, args.rp_id, args.chain)
     elif is_rdf:
         build, trigger = impl_rdf.CHAIN_BUILDERS[args.impl]
         with bench.phase("jit"):
-            handles = build(impl_rdf.build_chain_nodes(df, args.chain_len, args.rp_id))
+            handles = build(
+                impl_rdf.build_chain_nodes(df, args.chain_len, args.rp_id, args.chain))
         with bench.phase("loop"):
             result = trigger(handles)
     elif args.impl == "uproot":
         import impl_uproot
 
         with bench.phase("loop"):
-            result = impl_uproot.chain_uproot(args.input, args.chain_len, args.rp_id)
+            result = impl_uproot.chain_uproot(args.input, args.chain_len, args.rp_id, args.chain)
         bench.override_bytes("loop", impl_uproot.bytes_read())
     else:
         import impl_python
 
         with bench.phase("loop"):
-            result = impl_python.chain_python(df, args.chain_len, args.rp_id)
+            result = impl_python.chain_python(df, args.chain_len, args.rp_id, args.chain)
 
     bench.record["event_loops"] = result["event_loops"]
     bench.finish(

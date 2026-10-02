@@ -47,12 +47,26 @@ DEFAULT_POT = "box"
 # Filter chain for TEST 2, in order -- the notebook's rdata_analysis() chain, with its
 # nPPSLocalTrack > 0 baseline as an explicit first step so --chain-len sweeps the whole thing.
 CHAIN_STEPS = ["pps", "double_arm", "diamond", "rp_id", "xi"]
+# The 1 TB campaign's chain: five cuts on further PPS columns and one on
+# PPSLocalTrack_multiRPProtonIdx, which is there because rp_id reads PPSLocalTrack_decRPId a
+# second time, then the five steps above -- eleven filters over ten distinct branches. The added
+# steps come first, weakest cut first, because after the five steps above they pass every event
+# that reaches them.
+LONG_CHAIN_STEPS = ["theta_y", "multi_proton", "multi_rp_idx", "single_rp_idx", "time",
+                    "time_unc"] + CHAIN_STEPS
+CHAINS = {"base": CHAIN_STEPS, "long": LONG_CHAIN_STEPS}
 CHAIN_COLUMNS = {
     "pps": "nPPSLocalTrack",
     "double_arm": "PPSLocalTrack_decRPId",
     "diamond": "PPSLocalTrack_rpType",
     "rp_id": "PPSLocalTrack_decRPId",
     "xi": "Proton_singleRP_xi",
+    "multi_rp_idx": "PPSLocalTrack_multiRPProtonIdx",
+    "single_rp_idx": "PPSLocalTrack_singleRPProtonIdx",
+    "time": "PPSLocalTrack_time",
+    "time_unc": "PPSLocalTrack_timeUnc",
+    "theta_y": "Proton_singleRP_thetaY",
+    "multi_proton": "nProton_singleRP",
 }
 MAX_CHAIN_LEN = len(CHAIN_STEPS)
 EFFICIENCY_COLUMNS = ["PPSLocalTrack_x", "PPSLocalTrack_y", "PPSLocalTrack_decRPId"]
@@ -64,15 +78,15 @@ XI_RANGE = (0.05, 0.1)
 WARMUP_INPUT = os.path.join(REPO_ROOT, "examples", "test.root")
 
 
-def chain_steps(chain_len):
+def chain_steps(chain_len, chain="base"):
     """The first `chain_len` steps of the chain."""
-    return CHAIN_STEPS[:chain_len]
+    return CHAINS[chain][:chain_len]
 
 
-def chain_columns(chain_len):
+def chain_columns(chain_len, chain="base"):
     """Distinct branches the first `chain_len` steps need, in first-use order."""
     columns = []
-    for name in chain_steps(chain_len):
+    for name in chain_steps(chain_len, chain):
         column = CHAIN_COLUMNS[name]
         if column not in columns:
             columns.append(column)
@@ -230,6 +244,22 @@ def current_rss_kb():
         return peak_rss_kb()
 
 
+def proc_io():
+    """
+    The kernel's read counters for this process, or None off Linux.
+
+    rchar is every byte handed to read()/pread(), whatever file system served it; read_bytes is
+    what reached a block device, which Lustre clients may not account at all. They cross-check
+    TFile::GetFileBytesRead from outside ROOT.
+    """
+    try:
+        with open("/proc/self/io") as f:
+            fields = dict(line.split(":", 1) for line in f if ":" in line)
+    except OSError:
+        return None
+    return {"rchar": int(fields["rchar"]), "read_bytes": int(fields["read_bytes"])}
+
+
 def start_rss_trace(interval=0.1):
     """
     Samples this process's RSS into $RSS_TRACE, tagged with the phase it was taken in.
@@ -302,6 +332,7 @@ class Bench:
         if self._trace is not None:
             self._trace["phase"] = name
         bytes_before = ROOT.TFile.GetFileBytesRead()
+        io_before = proc_io()
         start = time.perf_counter()
         # Process CPU time summed over all threads. GNU time's CPU% averages over the whole
         # process, whose first ~5 s are single-threaded setup, so it cannot say how many cores
@@ -314,6 +345,12 @@ class Bench:
         self.record[f"wall_{name}"] = self.record.get(f"wall_{name}", 0.0) + elapsed
         self.record[f"cpu_{name}"] = self.record.get(f"cpu_{name}", 0.0) + cpu
         self.record[f"bytes_{name}"] = self.record.get(f"bytes_{name}", 0) + read
+        io_after = proc_io()
+        if io_before and io_after:
+            for counter in ("rchar", "read_bytes"):
+                key = f"io_{counter}_{name}"
+                self.record[key] = (self.record.get(key, 0)
+                                    + io_after[counter] - io_before[counter])
         if self._trace is not None:
             self._trace["phase"] = f"after_{name}"
 

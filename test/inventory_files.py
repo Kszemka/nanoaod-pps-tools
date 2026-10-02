@@ -50,7 +50,7 @@ STORE_PATH = re.compile(
 
 
 def benchmark_columns():
-    return sorted(set(bc.CHAIN_COLUMNS.values()) | set(bc.EFFICIENCY_COLUMNS))
+    return sorted(set(bc.chain_columns(bc.MAX_CHAIN_LEN)) | set(bc.EFFICIENCY_COLUMNS))
 
 
 def read_list(list_path, prefix):

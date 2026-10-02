@@ -116,6 +116,9 @@ ONLY_USED="${ONLY_USED:-}"
 #   weakslim  T2S T2 again on the 6-column copies
 #   size      T5's RDataFrame and uproot runs on each point of SIZE_SERIES (DATASET=big)
 #   sizepy    T5's Python runs on the same points, smallest first (DATASET=big)
+#   strong11  T1 for the 11-filter chain alone (bench_chain --chain long), on the slim set
+#             whose files hold just its 10 branches (DATASET=big, DATA_DIR=<slim set>)
+#   weak11    T2 for the same chain on the same set
 TESTS="${TESTS:-strong weak qstruct impl slim weakslim}"
 
 # has_test <name>
@@ -125,7 +128,7 @@ has_test() {
 for requested in $TESTS; do
     case "$requested" in
         strong|weak|qstruct|impl|slim|weakslim) ;;
-        size|sizepy)
+        size|sizepy|strong11|weak11)
             if [[ "$DATASET" != big ]]; then
                 echo "ERROR: TESTS=$requested needs DATASET=big (the ds_N.root copies)." >&2
                 exit 1
@@ -134,6 +137,20 @@ for requested in $TESTS; do
         *) echo "ERROR: unknown test '$requested' in TESTS." >&2; exit 1 ;;
     esac
 done
+
+# The slim set holds only the 11-filter chain's branches, so nothing else can run on it: the
+# 5-filter chain and the filter would, but they are measured on the full files, and the
+# efficiency column's x/y are not there at all.
+ONLY_CHAIN11=1
+for requested in $TESTS; do
+    [[ "$requested" == strong11 || "$requested" == weak11 ]] || ONLY_CHAIN11=""
+done
+# T1 for the long chain: no t0 (its ImplicitMT(1) penalty is measured on the full files) and no
+# t2, which on 1 TB costs half a t1. STRONG11_R2_THREADS are measured a second time, after the
+# whole first sweep, so the repeat sees the node at a different moment.
+STRONG11_THREADS="${STRONG11_THREADS:-$(for t in $THREADS_LIST; do
+    [[ "$t" == 0 || "$t" == 2 ]] || printf '%s ' "$t"; done)}"
+STRONG11_R2_THREADS="${STRONG11_R2_THREADS:-}"
 
 # Inputs are a .root file or a .txt list of them; every benchmark accepts both. Each variable
 # can still be overridden on its own.
@@ -162,7 +179,8 @@ case "$DATASET" in
         # ds_1.root .. ds_$BIG_COPIES.root in DATA_DIR, from make_bigset.sh. The lists over
         # them are written below into lists/, so the layout is the same as `real` and nothing
         # further down has to know which of the two it is running on.
-        BIG_COPIES="${BIG_COPIES:-96}"
+        # The slim set's build job writes copies.txt: its count comes from a measurement.
+        BIG_COPIES="${BIG_COPIES:-$(cat "$DATA_DIR/copies.txt" 2>/dev/null || echo 96)}"
         # T4's input: rdf-eager reads it up to six times, which on the whole set would be 6 TB.
         IMPL_COPIES="${IMPL_COPIES:-9}"
         DS_CORE="${DS_CORE:-$DATA_DIR/lists/core.txt}"
@@ -542,9 +560,39 @@ if [[ -n "$COLD" && -z "${DRY_RUN:-}" ]]; then
 fi
 if [[ "$WARMUP_RUNS" -eq 1 ]]; then
     echo "=== discarded warm-up runs ==="
-    run_one "warmup_filter_rdf" bench_filter.py --input "$WARMUP_INPUT_SET" --impl rdf
-    run_one "warmup_chain_rdf-lazy" bench_chain.py --input "$WARMUP_INPUT_SET" --impl rdf-lazy
-    run_one "warmup_eff_jit" bench_efficiency.py --input "$WARMUP_INPUT_SET" --impl jit
+    if [[ -z "$ONLY_CHAIN11" ]]; then
+        run_one "warmup_filter_rdf" bench_filter.py --input "$WARMUP_INPUT_SET" --impl rdf
+        run_one "warmup_chain_rdf-lazy" bench_chain.py --input "$WARMUP_INPUT_SET" --impl rdf-lazy
+        run_one "warmup_eff_jit" bench_efficiency.py --input "$WARMUP_INPUT_SET" --impl jit
+    fi
+    if has_test strong11 || has_test weak11; then
+        run_one "warmup_chain11_rdf-lazy" bench_chain.py --input "$WARMUP_INPUT_SET" \
+            --impl rdf-lazy --chain long
+    fi
+fi
+
+# T1 and T2 for the 11-filter chain on the slim set. Labelled strong_/weak_ like T1 and T2, so
+# the figures pick them up; the test field (chain11) keeps them apart from the 5-filter chain.
+if has_test strong11; then
+echo "=== T1 strong scaling, 11-filter chain, on $(basename "$DS_CORE"): $STRONG11_THREADS ==="
+for threads in $STRONG11_THREADS; do
+    run_one "r1_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
+        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
+done
+for threads in $STRONG11_R2_THREADS; do
+    run_one "r2_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
+        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
+done
+fi
+
+if has_test weak11; then
+echo "=== T2 weak scaling, 11-filter chain: $WEAK_PATTERN on N threads ==="
+for repeat in $(seq 1 "$REPEATS_WEAK"); do
+    for n in $WEAK_SERIES; do
+        run_one "r${repeat}_weak_chain11_rdf-lazy_t${n}" bench_chain.py \
+            --input "$(weak_input "$n")" --impl rdf-lazy --chain long --threads "$n"
+    done
+done
 fi
 
 # T1: the same events every time, thread count varying. Repeats are the outer loop so that

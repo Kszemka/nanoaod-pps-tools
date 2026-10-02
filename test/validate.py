@@ -173,11 +173,16 @@ def main():
         ],
     )
 
-    for chain_len in range(1, bc.MAX_CHAIN_LEN + 1):
+    # The long chain only at full length: the per-filter counts it is compared on already cover
+    # every shorter prefix.
+    sweeps = [("base", n) for n in range(1, bc.MAX_CHAIN_LEN + 1)]
+    sweeps.append(("long", len(bc.LONG_CHAIN_STEPS)))
+    for chain, chain_len in sweeps:
         records = []
         for impl in ("rdf-eager", "rdf-report", "python", "uproot", "rdf-lazy"):
             record = run_bench(
-                "bench_chain.py", *common, "--impl", impl, "--chain-len", str(chain_len)
+                "bench_chain.py", *common, "--impl", impl, "--chain", chain,
+                "--chain-len", str(chain_len)
             )
             checksums = dict(record["checksums"])
             # rdf-lazy deliberately does not collect per-filter counts -- that is precisely what
@@ -185,7 +190,7 @@ def main():
             if checksums.get("intermediate") is None:
                 checksums.pop("intermediate", None)
             records.append((f"{impl} [{record['event_loops']} loops]", checksums))
-        ok &= compare(f"TEST 2 -- chain-len {chain_len}", records)
+        ok &= compare(f"TEST 2 -- {chain} chain, chain-len {chain_len}", records)
 
     # Geometry first within TEST 3: if the transcription is wrong, the implementations below can
     # still agree with each other perfectly and all be wrong together.

@@ -92,18 +92,27 @@ def _step_mask(name, data, rp_id):
         return ak.to_numpy(ak.any(column == bc.DIAMOND_RP_TYPE, axis=1))
     if name == "rp_id":
         return ak.to_numpy(ak.any(column == rp_id, axis=1))
-    lo, hi = bc.XI_RANGE
-    return ak.to_numpy(ak.any((column >= lo) & (column <= hi), axis=1))
+    if name == "xi":
+        lo, hi = bc.XI_RANGE
+        return ak.to_numpy(ak.any((column >= lo) & (column <= hi), axis=1))
+    if name == "multi_rp_idx":
+        return ak.to_numpy(ak.any(column >= 0, axis=1))
+    if name == "single_rp_idx":
+        return ak.to_numpy(ak.any(column == -1, axis=1))
+    if name == "multi_proton":
+        return ak.to_numpy(column) > 1
+    # time, time_unc, theta_y
+    return ak.to_numpy(ak.any(column != 0, axis=1))
 
 
-def chain_uproot(path, chain_len, rp_id=bc.DEFAULT_RP_ID):
-    data = _read(path, bc.chain_columns(chain_len))
+def chain_uproot(path, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base"):
+    data = _read(path, bc.chain_columns(chain_len, chain))
     n_events = len(data)
     counts = [n_events]
 
     # What RDataFrame does: later steps only ever look at events that got past the earlier ones.
     surviving = np.arange(n_events)
-    for name in bc.chain_steps(chain_len):
+    for name in bc.chain_steps(chain_len, chain):
         surviving = surviving[_step_mask(name, data[surviving], rp_id)]
         counts.append(len(surviving))
     return {"final": counts[-1], "intermediate": counts, "event_loops": 1}

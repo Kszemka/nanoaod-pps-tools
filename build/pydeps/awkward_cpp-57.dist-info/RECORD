@@ -1,0 +1,17 @@
+awkward_cpp-57.dist-info/INSTALLER,sha256=zuuue4knoyJ-UwPPXg8fezS7VCrXJQrAP7zeNuwvFQg,4
+awkward_cpp-57.dist-info/METADATA,sha256=2ilxvbyxhfsbm_-A1HDyc1uZa6vPhFxFDIty31RHAGU,2086
+awkward_cpp-57.dist-info/RECORD,,
+awkward_cpp-57.dist-info/WHEEL,sha256=xemmO9nerHL1aHvnbYnyAYZLDEtF5pWPcUT2aHNlGd4,140
+awkward_cpp-57.dist-info/licenses/LICENSE,sha256=8F5OAD_PpZAb4NOYgFqGU6oelSEEM-AOiaTFUoSRtOY,1520
+awkward_cpp-57.dist-info/licenses/rapidjson/license.txt,sha256=oUDl1G_nNKHHjxo8PvIHhx3XVki-cf3ajjCbI6uLHzI,5152
+awkward_cpp/__init__.py,sha256=c3K_Hb4C1gVOl_q1IfB8k-a0zcb_TrH1l39FsP5Zp-c,161
+awkward_cpp/__pycache__/__init__.cpython-314.pyc,,
+awkward_cpp/__pycache__/_kernel_signatures.cpython-314.pyc,,
+awkward_cpp/__pycache__/cpu_kernels.cpython-314.pyc,,
+awkward_cpp/__pycache__/libawkward.cpython-314.pyc,,
+awkward_cpp/_kernel_signatures.py,sha256=_2egOVZpU1YIoVIx087JMG6x2CU5FMcqMp0Gw2AkDUk,140313
+awkward_cpp/cpu_kernels.py,sha256=IyaDZ7pKrBuIMoZGGN7ey1GBhy6CEUY2oOwwxS4jkuw,635
+awkward_cpp/lib/_ext.cpython-314-darwin.so,sha256=unY5v7NAVv2LctfkBRmOCIMG3Hqkm71AwQhSvQJANgY,462864
+awkward_cpp/lib/libawkward-cpu-kernels.dylib,sha256=qAhik0VyufzA3cJgNU8JbjIPuzoMlxft-Z1ZL_XJBq8,1249952
+awkward_cpp/lib/libawkward.dylib,sha256=7eT9cJjT8HoHmZMilQkX8iEBTBXbb6YC-mkiJZJfpUA,838608
+awkward_cpp/libawkward.py,sha256=qG9CZd9Qebb17HmAaFa1aCq1HtBBnlLM0jfcUxTkZO4,8581

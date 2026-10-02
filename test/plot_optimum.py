@@ -15,6 +15,11 @@ root of the work, which is why ds_x32 peaks at 8-16 threads and 1 TB is still ri
 Writes 14_optimum_vs_size.png (fitted n* and the measured best thread count against events,
 with a sqrt(N) guide and each machine's core count) and prints the fit for the text.
 
+Near the optimum T(n) is flat, so the fastest point alone is decided by noise. The plateau is
+the range of thread counts whose median loop time is within 5% of the minimum -- about the
+run-to-run spread on Helios -- and is drawn as a whisker on the fastest point. A fitted n*
+beyond the sweep is not a measurement; it is drawn at the last point with an arrow.
+
     plot_optimum.py --results results-ares results-ares-big results-helios-x32 ... [--out DIR]
 
 Needs only matplotlib, like plot_results.py.
@@ -29,6 +34,7 @@ from plot_results import CORE_TEST_COLOUR, CORE_TEST_LABEL, core_rows, dedupe_la
     load_records, median
 
 MACHINE_MARKER = {"ares": "o", "helios": "s"}
+PLATEAU = 1.05
 
 
 def solve3(m, v):
@@ -97,7 +103,8 @@ def campaign(results_dir):
         if fit is None:
             continue
         c, a, b = fit
-        best_n = min(points, key=lambda p: p[1])[0]
+        best_n, best_t = min(points, key=lambda p: p[1])
+        flat = [n for n, t in points if t <= PLATEAU * best_t]
         machines = sorted({r.get("machine") for r in runs if r.get("machine")})
         entries.append({
             "dir": os.path.basename(os.path.normpath(results_dir)),
@@ -109,21 +116,30 @@ def campaign(results_dir):
             "c": c, "a": a, "b": b,
             "n_star": math.sqrt(a / b) if b > 0 and a > 0 else None,
             "best_n": best_n,
+            "plateau": (min(flat), max(flat)),
             "max_n": points[-1][0],
         })
     return entries
 
 
 def print_table(entries):
-    print(f"{'campaign':24s} {'machine':7s} {'events':>9s} {'test':10s} {'a [s]':>8s} "
-          f"{'b [ms]':>7s} {'n*':>6s} {'best':>5s} {'max':>4s}")
+    print(f"{'campaign':26s} {'machine':7s} {'events':>9s} {'test':10s} {'a [s]':>8s} "
+          f"{'b [ms]':>7s} {'n*':>11s} {'best':>5s} {'plateau':>8s} {'max':>4s}")
     for e in entries:
-        n_star = f"{e['n_star']:.0f}" if e["n_star"] else f">{e['max_n']}"
+        if e["n_star"] is None:
+            n_star = f">{e['max_n']}"
+        elif e["n_star"] > e["max_n"]:
+            n_star = f">{e['max_n']} (fit)"
+        else:
+            n_star = f"{e['n_star']:.0f}"
         best = f"{e['best_n']}" + ("+" if e["best_n"] == e["max_n"] else "")
-        print(f"{e['dir']:24s} {e['machine']:7s} {e['events'] / 1e6:8.1f}M {e['test']:10s} "
-              f"{e['a']:8.1f} {e['b'] * 1000:7.1f} {n_star:>6s} {best:>5s} {e['max_n']:>4d}")
+        plateau = "{}-{}".format(*e["plateau"])
+        print(f"{e['dir']:26s} {e['machine']:7s} {e['events'] / 1e6:8.1f}M {e['test']:10s} "
+              f"{e['a']:8.1f} {e['b'] * 1000:7.1f} {n_star:>11s} {best:>5s} {plateau:>8s} "
+              f"{e['max_n']:>4d}")
     print("  best = thread count of the shortest loop; '+' = the sweep's last point, so the "
-          "optimum lies beyond it")
+          f"optimum lies beyond it; plateau = median loop time within {PLATEAU:.2f} x the "
+          "shortest")
 
 
 def plot(entries, out_dir):
@@ -146,16 +162,25 @@ def plot(entries, out_dir):
             mine = [e for e in rows if e["machine"] == machine]
             marker = MACHINE_MARKER.get(machine, "D")
             fitted = [e for e in mine if e["n_star"]]
-            ax.plot([e["events"] for e in fitted], [e["n_star"] for e in fitted], marker=marker,
+            ax.plot([e["events"] for e in fitted],
+                    [min(e["n_star"], e["max_n"]) for e in fitted], marker=marker,
                     ls="-", color=colour, mfc="none", ms=8, label=f"{machine}: fitted $n^*$")
-            ax.plot([e["events"] for e in mine], [e["best_n"] for e in mine], marker=marker,
-                    ls="none", color=colour, ms=6, label=f"{machine}: fastest measured")
-            # A sweep whose fastest point is its last only bounds the optimum from below.
+            ax.errorbar([e["events"] for e in mine], [e["best_n"] for e in mine],
+                        yerr=[[e["best_n"] - e["plateau"][0] for e in mine],
+                              [e["plateau"][1] - e["best_n"] for e in mine]],
+                        marker=marker, ls="none", color=colour, ms=6, capsize=3,
+                        label=f"{machine}: fastest measured, {PLATEAU - 1:.0%} plateau")
+            # A sweep whose fastest point is its last only bounds the optimum from below, and
+            # so does a fit whose n* lies beyond it.
             for e in mine:
                 if e["best_n"] == e["max_n"]:
                     ax.annotate("", xy=(e["events"], e["best_n"] * 1.6),
                                 xytext=(e["events"], e["best_n"]),
                                 arrowprops={"arrowstyle": "->", "color": colour})
+                if e["n_star"] and e["n_star"] > e["max_n"]:
+                    ax.annotate("", xy=(e["events"] * 1.15, e["max_n"] * 1.6),
+                                xytext=(e["events"] * 1.15, e["max_n"]),
+                                arrowprops={"arrowstyle": "->", "color": colour, "ls": ":"})
         anchor = next((e for e in rows if e["n_star"]), None)
         if anchor:
             xs = [x_lo, x_hi]

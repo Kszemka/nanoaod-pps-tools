@@ -29,6 +29,22 @@ def chain_filters(rp_id=bc.DEFAULT_RP_ID):
         "diamond": lambda df: filter_detector_type(df, "diamond"),
         "rp_id": lambda df: filter_detector_specific_events(df, rp_id),
         "xi": lambda df: filter_xi_ranged_events(df, *bc.XI_RANGE),
+        "multi_rp_idx": lambda df: df.Filter(
+            "ROOT::VecOps::Any(PPSLocalTrack_multiRPProtonIdx >= 0)",
+            "Events with a track used by a multi-RP proton"),
+        "single_rp_idx": lambda df: df.Filter(
+            "ROOT::VecOps::Any(PPSLocalTrack_singleRPProtonIdx == -1)",
+            "Events with a track not used by a single-RP proton"),
+        "time": lambda df: df.Filter(
+            "ROOT::VecOps::Any(PPSLocalTrack_time != 0)", "Events with a timed track"),
+        "time_unc": lambda df: df.Filter(
+            "ROOT::VecOps::Any(PPSLocalTrack_timeUnc != 0)",
+            "Events with a track time uncertainty"),
+        "theta_y": lambda df: df.Filter(
+            "ROOT::VecOps::Any(Proton_singleRP_thetaY != 0)",
+            "Events with a single-RP proton thetaY"),
+        "multi_proton": lambda df: df.Filter(
+            "nProton_singleRP > 1", "Events with more than one single-RP proton"),
     }
 
 
@@ -44,7 +60,7 @@ def trigger_filter(handle):
 
 # --- TEST 2: filter chain --------------------------------------------------------------------
 
-def build_chain_nodes(df, chain_len, rp_id=bc.DEFAULT_RP_ID):
+def build_chain_nodes(df, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base"):
     """
     Every node of the chain, including the unfiltered root: `nodes[i]` has `i` filters applied.
 
@@ -53,7 +69,7 @@ def build_chain_nodes(df, chain_len, rp_id=bc.DEFAULT_RP_ID):
     """
     filters = chain_filters(rp_id)
     nodes = [df]
-    for name in bc.chain_steps(chain_len):
+    for name in bc.chain_steps(chain_len, chain):
         nodes.append(filters[name](nodes[-1]))
     return nodes
 
@@ -71,7 +87,7 @@ def trigger_chain_lazy(handles):
     }
 
 
-def trigger_chain_eager(root, chain_len, rp_id):
+def trigger_chain_eager(root, chain_len, rp_id, chain="base"):
     """
     Reproduces rdata_analysis(): the total event count, then one after every filter.
 
@@ -84,7 +100,7 @@ def trigger_chain_eager(root, chain_len, rp_id):
     filters = chain_filters(rp_id)
     counts = [int(root.Count().GetValue())]
     current = root
-    for name in bc.chain_steps(chain_len):
+    for name in bc.chain_steps(chain_len, chain):
         current = filters[name](current)
         counts.append(int(current.Count().GetValue()))
     return {"final": counts[-1], "intermediate": counts, "event_loops": len(counts)}

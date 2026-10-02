@@ -1,0 +1,56 @@
+# BSD 3-Clause License; see https://github.com/scikit-hep/awkward/blob/main/LICENSE
+
+
+from awkward import jax
+from awkward._dispatch import high_level_function
+from awkward._layout import from_arraylib, wrap_layout
+
+__all__ = ("from_jax",)
+
+
+@high_level_function()
+def from_jax(
+    array,
+    *,
+    regulararray=False,
+    highlevel=True,
+    behavior=None,
+    attrs=None,
+    primitive_policy="error",
+):
+    """Converts a JAX Array into an Awkward Array.
+
+    The data is not copied: the Awkward Array shares the JAX array's buffer.
+
+    The resulting layout may involve the following #ak.contents.Content types
+    (only):
+
+    * #ak.contents.NumpyArray
+    * #ak.contents.RegularArray if `regulararray=True`.
+
+    See also #ak.to_jax, #ak.from_numpy and #ak.from_jax.
+
+    Args:
+        array (jax.Array): The JAX Array to convert into an Awkward Array.
+        regulararray (bool): If True and the array is multidimensional,
+            the dimensions are represented by nested #ak.contents.RegularArray
+            nodes; if False and the array is multidimensional, the dimensions
+            are represented by a multivalued #ak.contents.NumpyArray.shape.
+            If the array is one-dimensional, this has no effect.
+        highlevel (bool): If True, return an #ak.Array; otherwise, return
+            a low-level #ak.contents.Content subclass.
+        behavior (None or dict): Custom #ak.behavior for the output array, if
+            high-level.
+        attrs (None or dict): Custom attributes for the output array, if
+            high-level.
+
+    Returns:
+        An #ak.Array built from the given JAX array.
+    """
+    jax.assert_registered()
+    return wrap_layout(
+        from_arraylib(array, regulararray, False, primitive_policy=primitive_policy),
+        highlevel=highlevel,
+        behavior=behavior,
+        attrs=attrs,
+    )

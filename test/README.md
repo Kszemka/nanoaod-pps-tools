@@ -18,6 +18,8 @@ Jedna ścieżka: `slurm_benchmark.sbatch` → `run_all.sh` → `validate.py` + `
 | `bench_common.py` | parser argumentów, fazy czasu, liczniki bajtów i RSS, rekord `BENCH` |
 | `impl_rdf.py`, `impl_python.py`, `impl_uproot.py` | implementacje mierzonych operacji |
 | `plot_results.py` | `raw.jsonl` → `bench.csv` + wykresy (nie wymaga ROOT-a, tylko matplotlib) |
+| `plot_optimum.py` | optimum liczby wątków względem rozmiaru wejścia, z kilku katalogów wyników |
+| `merge_results.py` | łączy dwie kampanie w jeden katalog, przesuwając numery powtórzeń drugiej |
 | `slurm_benchmark.sbatch` | zadanie na Aresie (cały węzeł, `--exclusive`) |
 | `environment.yml` | środowisko `pps-bench` (ROOT, correctionlib, uproot, awkward, matplotlib) |
 
@@ -424,11 +426,94 @@ by task is not available”).
 `MACHINE=helios` trafia do rekordów i do nazwy domyślnego katalogu (`results-helios-big` dla H4).
 Każdy rekord ma też pole `node` (nazwa węzła ze Slurma), a log zawiera `lscpu` i `numactl -H`.
 
+Powtórka wokół maksimum na 1 TB (trzy powtórzenia, gęstsza siatka 64–192):
+
+```bash
+sbatch $H -t 03:00:00 \
+     --export=ALL,TESTS=strong,RESUME=1,REPEATS_STRONG=3,THREADS_LIST="64 80 88 96 104 112 128 144 160 176 192" \
+     test/slurm_benchmark.sbatch
+```
+
+Jeśli na Heliosie nie ma już `results-helios-big/raw.jsonl` z pierwszego biegu, `RESUME` nie ma
+czego pominąć i zadanie liczy pełną serię r1–r3 (z t0, bez t1). Taki katalog sam w sobie nie
+nadaje się do wykresów: `plot_results.py` liczy wtedy przyspieszenie względem 64 wątków. Łączy się
+go z pierwszym biegiem, przesuwając powtórzenia drugiego o 1 (r1–r3 → r2–r4), łącznie ze śladami
+`rss_*.csv`:
+
+```bash
+python test/merge_results.py --base results/helios/run1/results-helios-big \
+    --add results/helios/run2/results-helios-big --shift 1 \
+    --out results/helios/results-helios-big-merged
+THREAD_SCALE=linear python test/plot_results.py --results results/helios/results-helios-big-merged
+```
+
+`THREAD_SCALE=linear` daje liniową oś wątków: przy siatce do 192 wątków zakres 96–192, gdzie leży
+maksimum, zajmuje połowę osi, a nie jedną czwartą jak na osi logarytmicznej.
+
 Optimum względem rozmiaru, po skopiowaniu wyników na laptopa:
 
 ```bash
-python test/plot_optimum.py --results results-ares results-ares-big \
-    results-helios-x32 results-helios-c9 results-helios-c32 results-helios-big --out results-helios-big
+python test/plot_optimum.py --results results/ares/results-ares-prefin results/ares/results-ares-big \
+    results/helios/run1/results-helios-{x32,c9,c32} results/helios/results-helios-big-merged \
+    --out results/helios/results-helios-big-merged
+```
+
+Tabela wypisuje też plateau: liczby wątków, dla których mediana czasu pętli jest w granicach 5%
+od najkrótszej (mniej więcej rozrzut powtórzeń na Heliosie). Na wykresie to wąs przy najszybszym
+punkcie. Dopasowane $n^*$ większe niż ostatni punkt siatki jest rysowane na tym punkcie ze strzałką
+i w tabeli opisane jako `>192 (fit)`.
+
+## Łańcuch 11 filtrów na 1 TB czytanym z dysku (Helios)
+
+ROOT czyta tylko koszyki gałęzi, których używa analiza. Na pełnych plikach 1 TB łańcuch 5 filtrów
+czyta więc z dysku tylko 28–37 GB na przebieg. W tej kampanii rozmiar zbioru wynika z liczby
+przeczytanych bajtów. Pliki zawierają wyłącznie 10 gałęzi łańcucha 11 filtrów
+(`bench_chain.py --chain long`, test `chain11`), więc łańcuch czyta cały plik, a zbiór ma ~1 TB.
+
+Łańcuch to najpierw `Proton_singleRP_thetaY != 0`, `nProton_singleRP > 1`,
+`PPSLocalTrack_multiRPProtonIdx >= 0`, `PPSLocalTrack_singleRPProtonIdx == -1`,
+`PPSLocalTrack_time != 0` i `PPSLocalTrack_timeUnc != 0`, potem 5 starych filtrów (z RP 22).
+Filtr `multiRPProtonIdx` daje dziesiątą gałąź, bo RP 22 czyta `PPSLocalTrack_decRPId` drugi raz.
+Na `examples/test.root`: 346 825 → 311 565 → 294 285 → 130 697 → 75 275, potem bez zmian aż do
+RP 22 (59 946) i xi (54 156). Odczyt to ~33 B na zdarzenie na dysku i 212 B po rozpakowaniu.
+
+Zadanie 0 (`test/slurm_slim11_build.sbatch`, ~1–2 h, bez `--exclusive`):
+1. `make_slim.py --columns chain11` na `ds_x32.root` daje `ds_x32_slim11.root`.
+2. `hadd -fk` 28 kopii daje `unit.root` (310,8 M zdarzeń, ~10,3 GB). Kontrola sprawdza zdarzenia,
+   gałęzie, rozmiar każdej gałęzi i kodek.
+3. Próba: łańcuch na zimno na `unit.root`, 1 wątek. Daje bajty na plik i czas na zdarzenie.
+4. `make_bigset.sh` robi N = ceil(1 TB / bajty na plik) kopii, najmniej 96. `copies.txt` jest
+   zapisywany na końcu, a `run_benchmark.sh` bierze z niego `BIG_COPIES`.
+
+Zadanie 1: tylko RDataFrame. `strong11` biegnie na 1–192 wątkach, bez t0 i t2, z drugim
+powtórzeniem dla 96–192. `weak11` to 1 plik na wątek, do 96. `RUN_TIMEOUT=86400`, bo sam t1 to
+~8–12 h; domyślne 4 h by go ubiło.
+
+```bash
+cd $SCRATCH/bench/nanoaod-pps-tools && git pull
+hpc-fs                                   # ~1 TB wolnego miejsca w $SCRATCH
+J0=$(sbatch --parsable test/slurm_slim11_build.sbatch)
+
+export MACHINE=helios DATASET=big TESTS="strong11 weak11" \
+    DATA_DIR=$SCRATCH/bench/slim11 RESULTS=$SCRATCH/bench/results-helios-slim11 \
+    THREADS_LIST="1 4 8 12 16 24 32 48 64 80 96 112 128 144 160 176 192" \
+    STRONG11_R2_THREADS="96 128 144 160 192" \
+    WEAK_UNIT=1 WEAK_SERIES="1 2 4 8 16 32 48 64 96" RUN_TIMEOUT=86400
+sbatch --dependency=afterok:$J0 --cpus-per-task=192 --mem=384000 -t 40:00:00 \
+    --output=bench-helios-%j.out --error=bench-helios-%j.err test/slurm_benchmark.sbatch
+```
+
+`afterok`: zadanie 1 rusza tylko wtedy, gdy zbiór powstał cały. Wynik próby (bajty na plik, µs na
+zdarzenie, przewidywany czas t1) jest w `slim11-build-<id>.out` i w `$SCRATCH/bench/slim11/probe.json`.
+Jeśli zadanie 1 skończy się przez limit czasu, wyślij je ponownie z `RESUME=1` (wtedy bez
+`--dependency`).
+
+Kontrola po kampanii: `plot_results.py` wypisuje `read in the loop [chain11]`, czyli GB przeczytane
+w pętli przez każdy przebieg. Powinno to być ~1000 GB przy każdej liczbie wątków. Każdy rekord
+ma też `io_rchar_loop` i `io_read_bytes_loop` z `/proc/self/io`.
+
+```bash
+THREAD_SCALE=linear python test/plot_results.py --results results/helios/results-helios-slim11
 ```
 
 ## Uruchomienie lokalnie
@@ -461,7 +546,7 @@ pozwala podać mniejsze wejście.
 | `10_cores_busy.png` | ile rdzeni pracowało w pętli, pełny plik i slim | T1, T6 |
 | `11_file_width.png` | czas pętli, przyspieszenie i RSS: pełny schemat vs slim | T6 |
 | `13_input_size.png` | szczyt RSS i czas całkowity (setup + JIT + pętla) względem rozmiaru wejścia w GB, RDF / uproot / Python | `size`, `sizepy` |
-| `14_optimum_vs_size.png` | optymalna liczba wątków względem liczby zdarzeń, z kilku katalogów wyników (`plot_optimum.py`): dopasowane $n^*=\sqrt{a/b}$ z $T(n)=c+a/n+b\,n$, najszybszy zmierzony punkt, linia $\propto\sqrt{N}$ i liczba rdzeni maszyn | T1 |
+| `14_optimum_vs_size.png` | optymalna liczba wątków względem liczby zdarzeń, z kilku katalogów wyników (`plot_optimum.py`): dopasowane $n^*=\sqrt{a/b}$ z $T(n)=c+a/n+b\,n$, najszybszy zmierzony punkt z plateau 5%, linia $\propto\sqrt{N}$ i liczba rdzeni maszyn | T1 |
 
 Przy `DATASET=big` nie ma biegów T5, więc wykres 08 powstaje z największego punktu serii
 rozmiarów (9 kopii, ~98 GB). Na konsolę trafiają też nachylenia z serii (GB RSS i sekundy na
@@ -499,6 +584,8 @@ T1 t0” różnicę między identycznymi biegami RDF z T5 i z T1.
 | `RESULTS` | `test/results` (w `slurm_benchmark.sbatch`: `$SCRATCH/bench/results-$MACHINE[-big\|-real]`) | katalog wyjściowy |
 | `MACHINE` | `local` (w `slurm_benchmark.sbatch`: `ares`) | trafia do każdego rekordu |
 | `THREADS_LIST` | `1 2 4 8 12 16 24 32 48` | sweep wątków w T1 i T6 |
+| `THREAD_SCALE` | `linear` przy siatce do ≥96 wątków, inaczej `log` | skala osi wątków (i osi przyspieszenia) w `plot_results.py` |
+| `TABLE_THREADS` | `1 2 4 8 12 16 24 32 48 64 80 88 96 104 112 128 144 160 176 192` | wiersze tabel `table_scalability_*.tex` w `plot_results.py`; najszybszy punkt jest dokładany zawsze |
 | `WEAK_SERIES` | `1 2 4 8 16 32` / `1 2 4 8 16 32 48` | N w T2 |
 | `WEAK_UNIT` | `2` | kopii na wątek w punkcie T2 (tylko `big`): `weak_N.txt` ma `WEAK_UNIT`·N kopii |
 | `CHAIN_LENS` | `1 3 5` | długości łańcucha w T4 |

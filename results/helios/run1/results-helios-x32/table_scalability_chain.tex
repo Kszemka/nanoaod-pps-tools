@@ -1,26 +1,26 @@
 \begin{table}[htbp]
 \centering
-\caption{Parallel scalability metrics for the five-filter chain on $11.1$ million events (\texttt{ds\_x32.root}), measured on Helios (median of 3 repeats, inputs evicted from the page cache before every run, speedup against \texttt{ImplicitMT} with one thread). Nominal CPU utilisation for $n$ threads is $100n\%$. CPU loop covers the same event-loop window as the time column; CPU process is the whole-process figure, which also includes the single-threaded setup and JIT. The speedup maximum at 16 threads coincides with a parallel efficiency of only $39\%$.}
+\caption{Parallel scalability metrics for the five-filter chain on $11.1$ million events (\texttt{ds\_x32.root}), measured on Helios (median of 3 repeats, inputs evicted from the page cache before every run, speedup against \texttt{ImplicitMT} with one thread). Cores busy is the event loop's CPU time over its wall time, measured in the same window as the time column, so it is directly comparable to the thread count. The speedup maximum at 16 threads coincides with a parallel efficiency of only $39\%$.}
 \label{tab:scalability-chain}
-\begin{tabular}{rrrrrrr}
+\begin{tabular}{rrrrrr}
 \toprule
-Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & CPU loop & CPU process \\
+Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & Cores busy \\
 \midrule
- 1 & 8.82 & 1.26 & 1.00 & 100\% & 87\% & 91\% \\
- 2 & 4.83 & 2.30 & 1.83 & 91\% & 163\% & 133\% \\
- 4 & 2.77 & 4.00 & 3.18 & 80\% & 309\% & 184\% \\
- 8 & 1.81 & 6.15 & 4.89 & 61\% & 558\% & 238\% \\
-12 & 1.56 & 7.13 & 5.67 & 47\% & 763\% & 279\% \\
-16 & \textbf{1.43} & \textbf{7.75} & \textbf{6.16} & 39\% & 998\% & 328\% \\
-24 & 1.49 & 7.46 & 5.93 & 25\% & 1432\% & 443\% \\
-32 & 1.61 & 6.91 & 5.49 & 17\% & 1857\% & 575\% \\
-48 & 1.93 & 5.76 & 4.58 & 10\% & 2725\% & 891\% \\
-64 & 2.37 & 4.67 & 3.72 & 6\% & 3619\% & 1284\% \\
-80 & 2.79 & 3.98 & 3.17 & 4\% & 4483\% & 1726\% \\
-96 & 3.23 & 3.44 & 2.74 & 3\% & 5237\% & 2145\% \\
-128 & 4.19 & 2.65 & 2.11 & 2\% & 6784\% & 3114\% \\
-160 & 5.26 & 2.11 & 1.68 & 1\% & 6087\% & 3080\% \\
-192 & 6.19 & 1.79 & 1.43 & 1\% & 4307\% & 2293\% \\
+ 1 & 8.82 & 1.26 & 1.00 & 100\% & 0.9 \\
+ 2 & 4.83 & 2.30 & 1.83 & 91\% & 1.6 \\
+ 4 & 2.77 & 4.00 & 3.18 & 80\% & 3.1 \\
+ 8 & 1.81 & 6.15 & 4.89 & 61\% & 5.6 \\
+12 & 1.56 & 7.13 & 5.67 & 47\% & 7.6 \\
+16 & \textbf{1.43} & \textbf{7.75} & \textbf{6.16} & 39\% & 10.0 \\
+24 & 1.49 & 7.46 & 5.93 & 25\% & 14.3 \\
+32 & 1.61 & 6.91 & 5.49 & 17\% & 18.6 \\
+48 & 1.93 & 5.76 & 4.58 & 10\% & 27.3 \\
+64 & 2.37 & 4.67 & 3.72 & 6\% & 36.2 \\
+80 & 2.79 & 3.98 & 3.17 & 4\% & 44.8 \\
+96 & 3.23 & 3.44 & 2.74 & 3\% & 52.4 \\
+128 & 4.19 & 2.65 & 2.11 & 2\% & 67.8 \\
+160 & 5.26 & 2.11 & 1.68 & 1\% & 60.9 \\
+192 & 6.19 & 1.79 & 1.43 & 1\% & 43.1 \\
 \bottomrule
 \end{tabular}
 \end{table}

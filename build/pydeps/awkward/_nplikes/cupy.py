@@ -1,0 +1,253 @@
+# BSD 3-Clause License; see https://github.com/scikit-hep/awkward/blob/main/LICENSE
+
+from __future__ import annotations
+
+import awkward as ak
+from awkward._nplikes.array_like import maybe_materialize
+from awkward._nplikes.array_module import ArrayModuleNumpyLike
+from awkward._nplikes.dispatch import register_nplike
+from awkward._nplikes.numpy_like import ArrayLike, NumpyMetadata
+from awkward._nplikes.placeholder import PlaceholderArray
+from awkward._nplikes.shape import ShapeItem
+from awkward._nplikes.virtual import VirtualNDArray
+from awkward._typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from numpy.typing import DTypeLike
+
+np = NumpyMetadata.instance()
+
+
+@register_nplike
+class Cupy(ArrayModuleNumpyLike):
+    is_eager: Final = False
+    supports_structured_dtypes: Final = False
+    supports_virtual_arrays: Final = True
+
+    def __init__(self):
+        import awkward._connect.cuda  # noqa: F401
+
+        self._module = ak._connect.cuda.import_cupy("Awkward Arrays with CUDA")
+
+    @property
+    def ma(self):
+        raise ValueError(
+            "CUDA arrays cannot have missing values until CuPy implements "
+            "numpy.ma.MaskedArray"
+        )
+
+    @property
+    def char(self):
+        raise ValueError(
+            "CUDA arrays cannot do string manipulations until CuPy implements "
+            "numpy.char"
+        )
+
+    @property
+    def ndarray(self):
+        return self._module.ndarray
+
+    def frombuffer(
+        self, buffer, *, dtype: DTypeLike | None = None, count: ShapeItem = -1
+    ) -> ArrayLike:
+        assert not isinstance(buffer, (PlaceholderArray, VirtualNDArray))
+        assert not isinstance(count, (PlaceholderArray, VirtualNDArray))
+        return self._module.frombuffer(buffer, dtype=dtype, count=count)
+
+    def array_equal(
+        self, x1: ArrayLike, x2: ArrayLike, *, equal_nan: bool = False
+    ) -> bool:
+        x1, x2 = maybe_materialize(x1, x2)
+        if x1.shape != x2.shape:
+            return False
+        else:
+            return self._module.array_equal(x1, x2, equal_nan=equal_nan).get()
+
+    def repeat(
+        self, x: ArrayLike, repeats: ArrayLike | int, *, axis: int | None = None
+    ):
+        x, repeats = maybe_materialize(x, repeats)
+        if axis is not None:
+            raise NotImplementedError(f"repeat for CuPy with axis={axis!r}")
+        # https://github.com/cupy/cupy/issues/3849
+        if isinstance(repeats, self._module.ndarray):
+            all_stops = self._module.cumsum(repeats)
+            total = int(all_stops[-1].item()) if all_stops.size else 0
+            parents = self._module.zeros(total, dtype=int)
+            if total > 0:
+                stops, stop_counts = self._module.unique(
+                    all_stops[:-1], return_counts=True
+                )
+                # trailing zero-repeats make `all_stops[:-1]` contain boundary
+                # values equal to `total`, which is one past the end of
+                # `parents` -- drop those or the assignment below writes out
+                # of bounds (silently corrupts the GPU memory pool on CUDA
+                # instead of raising, since the write lands in still-mapped
+                # pool memory)
+                in_bounds = stops < total
+                stops = stops[in_bounds]
+                stop_counts = stop_counts[in_bounds]
+                parents[stops] = stop_counts
+                self._module.cumsum(parents, out=parents)
+            return x[parents]
+        else:
+            return self._module.repeat(x, repeats=repeats)
+
+    # For all reducers: https://github.com/cupy/cupy/issues/3819
+
+    def all(
+        self,
+        x: ArrayLike,
+        *,
+        axis: ShapeItem | tuple[ShapeItem, ...] | None = None,
+        keepdims: bool = False,
+        maybe_out: ArrayLike | None = None,
+    ) -> ArrayLike:
+        (x,) = maybe_materialize(x)
+        out = self._module.all(x, axis=axis, keepdims=keepdims, out=maybe_out)
+        # https://github.com/cupy/cupy/issues/3819 - cupy returns a 0d array for
+        # full reductions; coerce to a scalar to match NumPy (but not when
+        # `keepdims` requested a 1x...x1 array).
+        if axis is None and not keepdims and isinstance(out, self._module.ndarray):
+            return out.item()
+        else:
+            return out
+
+    def any(
+        self,
+        x: ArrayLike,
+        *,
+        axis: ShapeItem | tuple[ShapeItem, ...] | None = None,
+        keepdims: bool = False,
+        maybe_out: ArrayLike | None = None,
+    ) -> ArrayLike:
+        (x,) = maybe_materialize(x)
+        out = self._module.any(x, axis=axis, keepdims=keepdims, out=maybe_out)
+        if axis is None and not keepdims and isinstance(out, self._module.ndarray):
+            return out.item()
+        else:
+            return out
+
+    def count_nonzero(
+        self, x: ArrayLike, *, axis: ShapeItem | tuple[ShapeItem, ...] | None = None
+    ) -> ArrayLike:
+        (x,) = maybe_materialize(x)
+        assert isinstance(axis, int) or axis is None
+        out = self._module.count_nonzero(x, axis=axis)
+        if axis is None and isinstance(out, self._module.ndarray):
+            return out.item()
+        else:
+            return out
+
+    def min(
+        self,
+        x: ArrayLike,
+        *,
+        axis: ShapeItem | tuple[ShapeItem, ...] | None = None,
+        keepdims: bool = False,
+        maybe_out: ArrayLike | None = None,
+    ) -> ArrayLike:
+        (x,) = maybe_materialize(x)
+        out = self._module.min(x, axis=axis, keepdims=keepdims, out=maybe_out)
+        if axis is None and not keepdims and isinstance(out, self._module.ndarray):
+            return out.item()
+        else:
+            return out
+
+    def sum(
+        self,
+        x: ArrayLike,
+        *,
+        axis: ShapeItem | tuple[ShapeItem, ...] | None = None,
+        keepdims: bool = False,
+        maybe_out: ArrayLike | None = None,
+        dtype: DTypeLike | None = None,
+    ) -> ArrayLike:
+        (x,) = maybe_materialize(x)
+        out = self._module.sum(
+            x, axis=axis, keepdims=keepdims, out=maybe_out, dtype=dtype
+        )
+        if axis is None and not keepdims and isinstance(out, self._module.ndarray):
+            return out.item()
+        else:
+            return out
+
+    def max(
+        self,
+        x: ArrayLike,
+        *,
+        axis: ShapeItem | tuple[ShapeItem, ...] | None = None,
+        keepdims: bool = False,
+        maybe_out: ArrayLike | None = None,
+    ) -> ArrayLike:
+        (x,) = maybe_materialize(x)
+        out = self._module.max(x, axis=axis, keepdims=keepdims, out=maybe_out)
+        if axis is None and not keepdims and isinstance(out, self._module.ndarray):
+            return out.item()
+        else:
+            return out
+
+    @classmethod
+    def is_own_array_type(cls, type_: type) -> bool:
+        """
+        Args:
+            type_: object to test
+
+        Return `True` if the given object is a cupy buffer, otherwise `False`.
+
+        """
+        module, _, _suffix = type_.__module__.partition(".")
+        return module == "cupy"
+
+    def is_c_contiguous(self, x: ArrayLike) -> bool:
+        if isinstance(x, PlaceholderArray):
+            return True
+        else:
+            (x,) = maybe_materialize(x)
+            return x.flags["C_CONTIGUOUS"]  # type: ignore[attr-defined]
+
+    def byteswap(self, x: ArrayLike) -> ArrayLike:
+        if isinstance(x, VirtualNDArray):
+            if x.is_materialized:
+                return self.byteswap(x.materialize())
+            else:
+                return VirtualNDArray(
+                    x._nplike,
+                    x._shape,
+                    x._dtype,
+                    lambda: self.byteswap(x.materialize()),
+                    lambda: x.shape,
+                    x._buffer_key,
+                    __enable_caching__=x.__enable_caching__,
+                )
+        else:
+            dtype = x.dtype
+            original_shape = x.shape
+            # Handle complex types by swapping real and imaginary parts independently
+            if np.issubdtype(dtype, np.complexfloating):
+                component_dtype = np.finfo(dtype).dtype
+                float_view = self._module.ascontiguousarray(x).view(component_dtype)
+                swapped = self.byteswap(float_view)
+                return (
+                    self._module.ascontiguousarray(swapped)
+                    .view(dtype)
+                    .reshape(original_shape)
+                )
+
+            itemsize = dtype.itemsize
+
+            if itemsize == 1:
+                return self._module.copy(x)
+
+            bytes_arr = self._module.ascontiguousarray(x).view(np.uint8)
+            bytes_arr = bytes_arr.reshape(-1, itemsize)
+            bytes_arr = bytes_arr[..., ::-1]
+            return (
+                self._module.ascontiguousarray(bytes_arr.reshape(-1))
+                .view(dtype)
+                .reshape(original_shape)
+            )
+
+    def memory_ptr(self, x: ArrayLike) -> int:
+        (x,) = maybe_materialize(x)
+        return x.data.ptr  # type: ignore[attr-defined]

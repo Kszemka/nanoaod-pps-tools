@@ -1,0 +1,31 @@
+\begin{table}[htbp]
+\centering
+\caption{Parallel scalability metrics for the efficiency column on $1.07$ billion events (\texttt{core.txt}), measured on Helios (median of 1--4 repeats per point, inputs evicted from the page cache before every run, speedup against \texttt{ImplicitMT} with one thread). Cores busy is the event loop's CPU time over its wall time, measured in the same window as the time column, so it is directly comparable to the thread count. The speedup maximum at 160 threads coincides with a parallel efficiency of only $28\%$.}
+\label{tab:scalability-efficiency}
+\begin{tabular}{rrrrrr}
+\toprule
+Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & Cores busy \\
+\midrule
+ 1 & 558.12 & 1.91 & 1.00 & 100\% & 0.8 \\
+ 2 & 294.63 & 3.62 & 1.89 & 95\% & 1.7 \\
+ 4 & 162.02 & 6.58 & 3.44 & 86\% & 3.3 \\
+ 8 & 96.73 & 11.02 & 5.77 & 72\% & 6.7 \\
+12 & 66.73 & 15.97 & 8.36 & 70\% & 10.1 \\
+16 & 51.37 & 20.74 & 10.86 & 68\% & 13.2 \\
+24 & 36.04 & 29.56 & 15.49 & 65\% & 20.1 \\
+32 & 29.52 & 36.09 & 18.91 & 59\% & 26.3 \\
+48 & 21.54 & 49.46 & 25.91 & 54\% & 37.4 \\
+64 & 17.03 & 62.55 & 32.76 & 51\% & 49.1 \\
+80 & 15.22 & 69.98 & 36.66 & 46\% & 59.6 \\
+88 & 13.80 & 77.21 & 40.45 & 46\% & 65.2 \\
+96 & 13.42 & 79.42 & 41.60 & 43\% & 68.8 \\
+104 & 13.50 & 78.95 & 41.36 & 40\% & 66.1 \\
+112 & 13.21 & 80.63 & 42.24 & 38\% & 69.7 \\
+128 & 12.88 & 82.69 & 43.32 & 34\% & 72.5 \\
+144 & 12.73 & 83.69 & 43.84 & 30\% & 75.5 \\
+160 & \textbf{12.67} & \textbf{84.11} & \textbf{44.06} & 28\% & 74.6 \\
+176 & 12.85 & 82.94 & 43.44 & 25\% & 74.0 \\
+192 & 13.21 & 80.68 & 42.26 & 22\% & 75.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
