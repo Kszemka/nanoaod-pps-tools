@@ -509,11 +509,25 @@ Jeśli zadanie 1 skończy się przez limit czasu, wyślij je ponownie z `RESUME=
 `--dependency`).
 
 Kontrola po kampanii: `plot_results.py` wypisuje `read in the loop [chain11]`, czyli GB przeczytane
-w pętli przez każdy przebieg. Powinno to być ~1000 GB przy każdej liczbie wątków. Każdy rekord
-ma też `io_rchar_loop` i `io_read_bytes_loop` z `/proc/self/io`.
+w pętli przez każdy przebieg. Powinno to być tyle, ile ma cały zbiór, przy każdej liczbie wątków.
+Każdy rekord ma też `io_rchar_loop` i `io_read_bytes_loop` z `/proc/self/io`. Na Lustre
+`io_read_bytes_loop` nie jest dokładne (0,9–1,5 × odczytu), wiarygodne są `bytes_loop` i `rchar`.
 
 ```bash
 THREAD_SCALE=linear python test/plot_results.py --results results/helios/results-helios-slim11
+```
+
+Dogrywka (~2 h): powtórzenia tam, gdzie pomiar był pojedynczy albo zakłócony przez chwilowe
+spowolnienie Lustre (czas 2–3 ×, za dużo zajętych rdzeni). `RESUME=1` pomija wszystkie etykiety,
+które już są w `raw.jsonl`. `REPEATS_WEAK=2` dokłada całą serię `r2_weak_chain11_*`, a
+`STRONG11_R3_THREADS` i `WEAK11_R3_SERIES` dają trzecie powtórzenie, więc mediana nie uśrednia
+już wartości odstającej (mediana z dwóch to średnia). Do zmiennych z kampanii dochodzi:
+
+```bash
+export RESUME=1 REPEATS_WEAK=2 WEAK11_R3_SERIES="96" \
+    STRONG11_R2_THREADS="96 112 128 144 160 176 192" STRONG11_R3_THREADS="144 192"
+sbatch --cpus-per-task=192 --mem=384000 -t 04:00:00 \
+    --output=bench-helios-%j.out --error=bench-helios-%j.err test/slurm_benchmark.sbatch
 ```
 
 ## Uruchomienie lokalnie

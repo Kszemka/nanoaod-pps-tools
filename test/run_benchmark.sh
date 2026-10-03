@@ -147,10 +147,14 @@ for requested in $TESTS; do
 done
 # T1 for the long chain: no t0 (its ImplicitMT(1) penalty is measured on the full files) and no
 # t2, which on 1 TB costs half a t1. STRONG11_R2_THREADS are measured a second time, after the
-# whole first sweep, so the repeat sees the node at a different moment.
+# whole first sweep, so the repeat sees the node at a different moment. STRONG11_R3_THREADS
+# give a third run where the first two disagree, so the median no longer averages an outlier.
 STRONG11_THREADS="${STRONG11_THREADS:-$(for t in $THREADS_LIST; do
     [[ "$t" == 0 || "$t" == 2 ]] || printf '%s ' "$t"; done)}"
 STRONG11_R2_THREADS="${STRONG11_R2_THREADS:-}"
+STRONG11_R3_THREADS="${STRONG11_R3_THREADS:-}"
+# The same for weak11: points of WEAK_SERIES measured once more, labelled r3.
+WEAK11_R3_SERIES="${WEAK11_R3_SERIES:-}"
 
 # Inputs are a .root file or a .txt list of them; every benchmark accepts both. Each variable
 # can still be overridden on its own.
@@ -583,6 +587,10 @@ for threads in $STRONG11_R2_THREADS; do
     run_one "r2_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
         --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
 done
+for threads in $STRONG11_R3_THREADS; do
+    run_one "r3_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
+        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
+done
 fi
 
 if has_test weak11; then
@@ -592,6 +600,10 @@ for repeat in $(seq 1 "$REPEATS_WEAK"); do
         run_one "r${repeat}_weak_chain11_rdf-lazy_t${n}" bench_chain.py \
             --input "$(weak_input "$n")" --impl rdf-lazy --chain long --threads "$n"
     done
+done
+for n in $WEAK11_R3_SERIES; do
+    run_one "r3_weak_chain11_rdf-lazy_t${n}" bench_chain.py \
+        --input "$(weak_input "$n")" --impl rdf-lazy --chain long --threads "$n"
 done
 fi
 

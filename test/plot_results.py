@@ -1083,7 +1083,6 @@ def scalability_table(records, test):
         busy = cores_busy(r)
         if busy is not None and r.get("threads"):
             loop_cpu[r["threads"]].append(100 * busy)
-    inputs = sorted({r.get("input") for r in ok if r.get("input")})
     machines = sorted({r.get("machine") for r in ok if r.get("machine")})
     counts = [v[3] for k, v in aggregate(ok, ("threads",), "wall_loop").items() if k[0]]
     fewest, repeats = min(counts), max(counts)
@@ -1106,7 +1105,6 @@ def scalability_table(records, test):
             busy_text,
         ]) + r" \\")
 
-    source = ", ".join(latex_escape(name) for name in inputs) or "the core input"
     where = (f"measured on {latex_escape(machines[0].capitalize())}" if len(machines) == 1
              else "measured")
     if not n_events:
@@ -1131,7 +1129,7 @@ def scalability_table(records, test):
         read_note = f" Each run reads {span}~{unit} from disk in the event loop."
     caption = (
         f"Parallel scalability metrics for the {CORE_TEST_LABEL[test].replace('5-', 'five-')} "
-        f"on {events} (\\texttt{{{source}}}), {where} "
+        f"on {events}, {where} "
         f"({median_note}{cache_note}speedup against \\texttt{{ImplicitMT}} with one thread). "
         f"Cores busy is the event loop's CPU time over its wall time, measured in the same "
         f"window as the time column, so it is directly comparable to the thread count. "
