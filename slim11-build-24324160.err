@@ -1,0 +1,7 @@
+TClass::Init:0: RuntimeWarning: no dictionary for class edm::Hash<1> is available
+TClass::Init:0: RuntimeWarning: no dictionary for class edm::ParameterSetBlob is available
+TClass::Init:0: RuntimeWarning: no dictionary for class edm::ProcessHistory is available
+TClass::Init:0: RuntimeWarning: no dictionary for class edm::ProcessConfiguration is available
+TClass::Init:0: RuntimeWarning: no dictionary for class pair<edm::Hash<1>,edm::ParameterSetBlob> is available
+probe: 310755200 events, 16.090 GB read (100.02% of the file), loop 362 s, 1.165 us per event, passed 48523776
+set: 96 copies -> 1.545 TB read, 29.83 billion events; expected 1-thread loop on the whole set 9.7 h
