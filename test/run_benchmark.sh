@@ -149,10 +149,12 @@ done
 # t2, which on 1 TB costs half a t1. STRONG11_R2_THREADS are measured a second time, after the
 # whole first sweep, so the repeat sees the node at a different moment. STRONG11_R3_THREADS
 # give a third run where the first two disagree, so the median no longer averages an outlier.
+# STRONG11_R4_THREADS give a fourth where two of three runs were slowed down.
 STRONG11_THREADS="${STRONG11_THREADS:-$(for t in $THREADS_LIST; do
     [[ "$t" == 0 || "$t" == 2 ]] || printf '%s ' "$t"; done)}"
 STRONG11_R2_THREADS="${STRONG11_R2_THREADS:-}"
 STRONG11_R3_THREADS="${STRONG11_R3_THREADS:-}"
+STRONG11_R4_THREADS="${STRONG11_R4_THREADS:-}"
 # The same for weak11: points of WEAK_SERIES measured once more, labelled r3.
 WEAK11_R3_SERIES="${WEAK11_R3_SERIES:-}"
 
@@ -589,6 +591,10 @@ for threads in $STRONG11_R2_THREADS; do
 done
 for threads in $STRONG11_R3_THREADS; do
     run_one "r3_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
+        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
+done
+for threads in $STRONG11_R4_THREADS; do
+    run_one "r4_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
         --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
 done
 fi
