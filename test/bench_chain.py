@@ -7,6 +7,9 @@ filter (chain_len + 1 event loops); rdf-lazy and rdf-report need one.
 
 --chain long selects the 11-filter chain over 10 branches of the 1 TB slim campaign; its records
 are test "chain11", so they never mix with the 5-filter chain's.
+
+--period 2016 writes the same five steps for the 2016 detectors (strip pots 2|3 and 102|103,
+RP 3), so that the chain passes events on Run 2 Open Data; see bench_common.PERIODS.
 """
 
 import bench_common as bc
@@ -42,7 +45,8 @@ def main():
         with bench.phase("warmup"):
             bc.warmup(args, lambda d: impl_rdf.trigger_chain_lazy(
                 impl_rdf.build_chain_lazy(
-                    impl_rdf.build_chain_nodes(d, args.chain_len, args.rp_id, args.chain)
+                    impl_rdf.build_chain_nodes(d, args.chain_len, args.rp_id, args.chain,
+                                               args.period)
                 )
             ))
 
@@ -58,25 +62,29 @@ def main():
         # behaviour under study, not an artefact -- see impl_rdf.trigger_chain_eager.
         bench.record["graph_interleaved"] = True
         with bench.phase("loop"):
-            result = impl_rdf.trigger_chain_eager(df, args.chain_len, args.rp_id, args.chain)
+            result = impl_rdf.trigger_chain_eager(df, args.chain_len, args.rp_id, args.chain,
+                                                  args.period)
     elif is_rdf:
         build, trigger = impl_rdf.CHAIN_BUILDERS[args.impl]
         with bench.phase("jit"):
             handles = build(
-                impl_rdf.build_chain_nodes(df, args.chain_len, args.rp_id, args.chain))
+                impl_rdf.build_chain_nodes(df, args.chain_len, args.rp_id, args.chain,
+                                           args.period))
         with bench.phase("loop"):
             result = trigger(handles)
     elif args.impl == "uproot":
         import impl_uproot
 
         with bench.phase("loop"):
-            result = impl_uproot.chain_uproot(args.input, args.chain_len, args.rp_id, args.chain)
+            result = impl_uproot.chain_uproot(args.input, args.chain_len, args.rp_id, args.chain,
+                                              args.period)
         bench.override_bytes("loop", impl_uproot.bytes_read())
     else:
         import impl_python
 
         with bench.phase("loop"):
-            result = impl_python.chain_python(df, args.chain_len, args.rp_id, args.chain)
+            result = impl_python.chain_python(df, args.chain_len, args.rp_id, args.chain,
+                                              args.period)
 
     bench.record["event_loops"] = result["event_loops"]
     bench.finish(

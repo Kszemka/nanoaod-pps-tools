@@ -8,7 +8,7 @@ arrived, with --compare pointing at the lxplus CSV: entry counts and byte sizes 
 for file, which is the check that the transfer is complete.
 
 Per file:
-  era, primary_dataset, version, run   parsed from the /store path
+  era, primary_dataset, version, run   parsed from the /store path (Open Data paths: no run)
   size_bytes, entries, clusters        clusters are what ImplicitMT divides the work by
   n_branches, schema                   schema = short SHA-256 of the sorted branch names;
                                        files with different values cannot share a TChain safely
@@ -24,11 +24,18 @@ Per file:
   Ares:    find $SCRATCH/bench/real -name '*.root' -not -path '*/slim/*' > ares_files.txt
            python test/inventory_files.py --list ares_files.txt --output inventory_ares.csv \\
                --compare inventory_lxplus.csv
+
+The list may also hold remote URLs (root://, https://), e.g. the CERN Open Data files from
+opendata_index.py: each file is then opened over the network and only its metadata and the two
+PPS branches are read, a few percent of its size. --jobs N describes N files at a time.
+
+  Open Data: python test/inventory_files.py --list scan.txt --output remote.csv --jobs 8
 """
 
 import argparse
 import csv
 import hashlib
+import multiprocessing
 import os
 import re
 import sys
@@ -47,6 +54,10 @@ FIELDS = [
 STORE_PATH = re.compile(
     r"/(?P<era>[^/]+)/(?P<pd>[^/]+)/NANOAOD/(?P<version>[^/]+)/000/(?P<r1>\d{3})/(?P<r2>\d{3})/"
 )
+# /eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/120000/<uuid>.root,
+# and the same below any download directory that keeps <era>/<PD>/ (fetch_opendata.sh).
+OPENDATA_PATH = re.compile(r"/(?P<era>Run\d{4}[A-Z])/(?P<pd>[^/]+)/(?:NANOAOD/(?P<version>[^/]+)/)?")
+REMOTE = ("root://", "http://", "https://")
 
 
 def benchmark_columns():
@@ -73,9 +84,12 @@ def describe(path, rp_id, with_loop):
     if match:
         row.update(era=match["era"], primary_dataset=match["pd"], version=match["version"],
                    run=int(match["r1"] + match["r2"]))
+    elif match := OPENDATA_PATH.search(path):
+        row.update(era=match["era"], primary_dataset=match["pd"], version=match["version"])
     try:
-        row["size_bytes"] = os.path.getsize(path)
         layout = bc.tree_layout(path)
+        row["size_bytes"] = layout["size_bytes"] if path.startswith(REMOTE) \
+            else os.path.getsize(path)
     except OSError as exc:
         row["error"] = str(exc)
         return row
@@ -99,6 +113,15 @@ def describe(path, rp_id, with_loop):
         row["pps_fraction"] = round(with_pps.GetValue() / layout["entries"], 5)
         row["rp_fraction"] = round(in_rp.GetValue() / layout["entries"], 5)
     return row
+
+
+def init_worker(threads, no_loop):
+    if not no_loop:
+        bc.setup_root(threads)
+
+
+def describe_task(task):
+    return describe(*task)
 
 
 def load_csv(path):
@@ -158,16 +181,27 @@ def main():
                         help="metadata only: skip the PPS fractions")
     parser.add_argument("--threads", type=int, default=4, help="ImplicitMT for the PPS loop")
     parser.add_argument("--rp-id", type=int, default=bc.DEFAULT_RP_ID)
+    parser.add_argument("--jobs", type=int, default=1,
+                        help="files described at a time, each in its own process")
     args = parser.parse_args()
 
-    if not args.no_loop:
-        bc.setup_root(args.threads)
-
-    rows = []
     paths = read_list(args.list, args.prefix)
-    for index, path in enumerate(paths, 1):
-        print(f"[{index}/{len(paths)}] {path}", file=sys.stderr)
-        rows.append(describe(path, args.rp_id, not args.no_loop))
+    tasks = [(path, args.rp_id, not args.no_loop) for path in paths]
+    if args.jobs > 1:
+        # spawn, not fork: a forked child would inherit the parent's ROOT and TBB state.
+        context = multiprocessing.get_context("spawn")
+        with context.Pool(args.jobs, initializer=init_worker,
+                          initargs=(args.threads, args.no_loop)) as pool:
+            rows = []
+            for index, row in enumerate(pool.imap(describe_task, tasks), 1):
+                print(f"[{index}/{len(paths)}] {row['path']}", file=sys.stderr)
+                rows.append(row)
+    else:
+        init_worker(args.threads, args.no_loop)
+        rows = []
+        for index, task in enumerate(tasks, 1):
+            print(f"[{index}/{len(paths)}] {task[0]}", file=sys.stderr)
+            rows.append(describe_task(task))
 
     with open(args.output, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=FIELDS)

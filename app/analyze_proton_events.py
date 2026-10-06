@@ -56,16 +56,20 @@ class PPSHistogramType(Enum):
     PROTON_SINGLE_RP_XI = "Proton_singleRP_xi"
 
 
-def filter_double_arm_events(df):
+def filter_double_arm_events(df, left=(23, 123), right=(3, 103)):
     """
     Select events with tracks in both arms:
-    - Left arm: RP ID 23 or 123
-    - Right arm: RP ID 3 or 103
+    - Left arm: RP ID 23 or 123 (default)
+    - Right arm: RP ID 3 or 103 (default)
+
+    The pots are parameters because they depend on the data-taking period: in 2016 PPS ran
+    with strip pots 2, 3, 102 and 103 only.
     """
+    (l1, l2), (r1, r2) = left, right
     df_filtered = df.Filter(
-        "(ROOT::VecOps::Any(PPSLocalTrack_decRPId == 23 || PPSLocalTrack_decRPId == 123)) && "
-        "(ROOT::VecOps::Any(PPSLocalTrack_decRPId == 3 || PPSLocalTrack_decRPId == 103))",
-        "Events with tracks in both arms (23|123) and (3|103)"
+        f"(ROOT::VecOps::Any(PPSLocalTrack_decRPId == {l1} || PPSLocalTrack_decRPId == {l2})) && "
+        f"(ROOT::VecOps::Any(PPSLocalTrack_decRPId == {r1} || PPSLocalTrack_decRPId == {r2}))",
+        f"Events with tracks in both arms ({l1}|{l2}) and ({r1}|{r2})"
     )
     return df_filtered
 
@@ -109,19 +113,22 @@ def filter_detector_type(df, detector_type):
 
     Args:
         df: RDataFrame
-        detector_type: 'pixel' for silicon pixel detectors (rpType = 4)
+        detector_type: 'strip' for silicon strip detectors (rpType = 3, Run 2)
+                      'pixel' for silicon pixel detectors (rpType = 4)
                       'diamond' for diamond timing detectors (rpType = 5)
 
     Returns:
         Filtered RDataFrame
     """
     detector_type_map = {
+        'strip': 3,
         'pixel': 4,
         'diamond': 5
     }
 
     if detector_type.lower() not in detector_type_map:
-        raise ValueError(f"Unknown detector type '{detector_type}'. Use 'pixel' or 'diamond'.")
+        raise ValueError(f"Unknown detector type '{detector_type}'. "
+                         f"Use one of {', '.join(detector_type_map)}.")
 
     rp_type = detector_type_map[detector_type.lower()]
     filter_expr = f"ROOT::VecOps::Any(PPSLocalTrack_rpType == {rp_type})"

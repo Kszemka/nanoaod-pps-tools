@@ -12,7 +12,7 @@
 # TESTS selects the experiments; ONLY_USED=1 additionally drops the implementations no figure
 # uses. Both default per dataset, see below.
 #
-#   T1  strong scaling   core input (ds_x32 / core.txt), thread count varying  -> Amdahl, USL
+#   T1  strong scaling   core input (ds_x32 / core.txt), thread count varying  -> Amdahl
 #   T2  weak scaling     N threads on N units of work (ds_xN / weak_N.txt)
 #   T4  query structure  lazy / eager / Report() x chain length  (single thread, impl input)
 #   T5  implementations  RDataFrame / correctionlib / Python / uproot on the impl input,
@@ -55,7 +55,7 @@ PY="${PY:-python3}"
 RESULTS="${RESULTS:-$TEST_DIR/results}"
 DATA_DIR="${DATA_DIR:-$TEST_DIR/data}"
 MACHINE="${MACHINE:-local}"
-# 12 and 24 are not decoration: fit_usl needs points either side of the maximum, and with only
+# 12 and 24 are not decoration: the optimum fit needs points either side of the maximum, and with only
 # powers of two the region where the curve turns over is three points.
 THREADS_LIST="${THREADS_LIST:-1 2 4 8 12 16 24 32 48}"
 CHAIN_LENS="${CHAIN_LENS:-1 3 5}"
@@ -108,7 +108,7 @@ COLD="${COLD:-}"
 # ONLY_USED=1 runs just the implementations that end up in a figure or a number in the thesis.
 ONLY_USED="${ONLY_USED:-}"
 # Which experiments to run, in the order below. Names are the ones that appear in the labels:
-#   strong    T1  thread sweep on the core input        -> Amdahl, USL, efficiency, RSS, cores
+#   strong    T1  thread sweep on the core input        -> Amdahl, efficiency, RSS, cores
 #   weak      T2  N threads on N units of work
 #   qstruct   T4  lazy vs eager vs Report(), 1 thread
 #   impl      T5  RDataFrame vs Python vs uproot, pinned to one core
@@ -119,7 +119,11 @@ ONLY_USED="${ONLY_USED:-}"
 #   strong11  T1 for the 11-filter chain alone (bench_chain --chain long), on the slim set
 #             whose files hold just its 10 branches (DATASET=big, DATA_DIR=<slim set>)
 #   weak11    T2 for the same chain on the same set
+#   strongchain  T1 for the 5-filter chain alone, no t0, with $CHAIN_ARGS: the comparison of
+#             the real Open Data set against the artificial one (slurm_real_vs_synthetic.sbatch)
 TESTS="${TESTS:-strong weak qstruct impl slim weakslim}"
+# Extra bench_chain.py arguments for strongchain, e.g. "--period 2016" on Run 2 data.
+CHAIN_ARGS="${CHAIN_ARGS:-}"
 
 # has_test <name>
 has_test() {
@@ -127,7 +131,7 @@ has_test() {
 }
 for requested in $TESTS; do
     case "$requested" in
-        strong|weak|qstruct|impl|slim|weakslim) ;;
+        strong|weak|qstruct|impl|slim|weakslim|strongchain) ;;
         size|sizepy|strong11|weak11)
             if [[ "$DATASET" != big ]]; then
                 echo "ERROR: TESTS=$requested needs DATASET=big (the ds_N.root copies)." >&2
@@ -155,6 +159,11 @@ STRONG11_THREADS="${STRONG11_THREADS:-$(for t in $THREADS_LIST; do
 STRONG11_R2_THREADS="${STRONG11_R2_THREADS:-}"
 STRONG11_R3_THREADS="${STRONG11_R3_THREADS:-}"
 STRONG11_R4_THREADS="${STRONG11_R4_THREADS:-}"
+# Further whole sweeps, one per repeat number (e.g. "5 6"), over STRONG11_EXTRA_THREADS. Every
+# second sweep runs in reverse: file-system slowdowns come in waves of consecutive runs, and the
+# reversed order keeps one wave from hitting the same thread counts in both sweeps.
+STRONG11_EXTRA_REPEATS="${STRONG11_EXTRA_REPEATS:-}"
+STRONG11_EXTRA_THREADS="${STRONG11_EXTRA_THREADS:-}"
 # The same for weak11: points of WEAK_SERIES measured once more, labelled r3.
 WEAK11_R3_SERIES="${WEAK11_R3_SERIES:-}"
 
@@ -474,7 +483,7 @@ record["pinned_core"] = int(pinned) if pinned else None
 patterns = {
     "time_maxrss_kb": (r"Maximum resident set size \(kbytes\):\s*(\d+)", int),
     "cpu_percent": (r"Percent of CPU this job got:\s*(\d+)%", int),
-    "elapsed_s": (r"Elapsed \(wall clock\) time.*:\s*(?:(\d+):)?(\d+):([\d.]+)", None),
+    "elapsed_s": (r"Elapsed \(wall clock\) time[^)]*\):\s*(?:(\d+):)?(\d+):([\d.]+)", None),
     "ctx_voluntary": (r"Voluntary context switches:\s*(\d+)", int),
     "ctx_involuntary": (r"Involuntary context switches:\s*(\d+)", int),
 }
@@ -597,6 +606,20 @@ for threads in $STRONG11_R4_THREADS; do
     run_one "r4_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
         --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
 done
+read -r -a extra_threads <<< "$STRONG11_EXTRA_THREADS"
+sweep=0
+for repeat in $STRONG11_EXTRA_REPEATS; do
+    for ((k = 0; k < ${#extra_threads[@]}; k++)); do
+        if (( sweep % 2 )); then
+            threads="${extra_threads[${#extra_threads[@]} - 1 - k]}"
+        else
+            threads="${extra_threads[k]}"
+        fi
+        run_one "r${repeat}_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
+            --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
+    done
+    sweep=$((sweep + 1))
+done
 fi
 
 if has_test weak11; then
@@ -616,44 +639,59 @@ fi
 # T1: the same events every time, thread count varying. Repeats are the outer loop so that
 # slow drift on the node spreads across thread counts instead of landing on one of them.
 if has_test strong; then
-echo "=== T1 strong scaling on $(basename "$DS_CORE") ==="
-for repeat in $(seq 1 "$REPEATS_STRONG"); do
+    echo "=== T1 strong scaling on $(basename "$DS_CORE") ==="
+    for repeat in $(seq 1 "$REPEATS_STRONG"); do
     for threads in 0 $THREADS_LIST; do
-        run_one "r${repeat}_strong_filter_rdf_t${threads}" bench_filter.py \
-            --input "$DS_CORE" --impl rdf --threads "$threads"
-        run_one "r${repeat}_strong_chain_rdf-lazy_t${threads}" bench_chain.py \
+            run_one "r${repeat}_strong_filter_rdf_t${threads}" bench_filter.py \
+                --input "$DS_CORE" --impl rdf --threads "$threads"
+            run_one "r${repeat}_strong_chain_rdf-lazy_t${threads}" bench_chain.py \
             --input "$DS_CORE" --impl rdf-lazy --threads "$threads"
-        run_one "r${repeat}_strong_eff_jit_t${threads}" bench_efficiency.py \
-            --input "$DS_CORE" --impl jit --threads "$threads"
+            run_one "r${repeat}_strong_eff_jit_t${threads}" bench_efficiency.py \
+                --input "$DS_CORE" --impl jit --threads "$threads"
+        done
     done
-done
+fi
+
+# T1 for the chain alone, labelled like T1's chain runs so the same plots read it. No t0: the
+# ImplicitMT(1) penalty is already measured on the artificial set.
+if has_test strongchain; then
+    read -r -a chain_args <<< "$CHAIN_ARGS"
+    echo "=== T1 strong scaling, 5-filter chain ${CHAIN_ARGS:+($CHAIN_ARGS) }on $(basename "$DS_CORE") ==="
+    for repeat in $(seq 1 "$REPEATS_STRONG"); do
+        for threads in $THREADS_LIST; do
+            [[ "$threads" == 0 ]] && continue
+            run_one "r${repeat}_strong_chain_rdf-lazy_t${threads}" bench_chain.py \
+                --input "$DS_CORE" --impl rdf-lazy --threads "$threads" \
+                ${chain_args[@]+"${chain_args[@]}"}
+        done
+    done
 fi
 
 # T2: N threads against N units of work, so each thread keeps the same slice of it. Ideal
 # weak scaling is a flat wall-time line.
 if has_test weak; then
 echo "=== T2 weak scaling: $WEAK_PATTERN on N threads ==="
-for repeat in $(seq 1 "$REPEATS_WEAK"); do
-    for n in $WEAK_SERIES; do
+    for repeat in $(seq 1 "$REPEATS_WEAK"); do
+        for n in $WEAK_SERIES; do
         weak_ds="$(weak_input "$n")"
-        run_one "r${repeat}_weak_filter_rdf_t${n}" bench_filter.py \
-            --input "$weak_ds" --impl rdf --threads "$n"
-        run_one "r${repeat}_weak_chain_rdf-lazy_t${n}" bench_chain.py \
+            run_one "r${repeat}_weak_filter_rdf_t${n}" bench_filter.py \
+                --input "$weak_ds" --impl rdf --threads "$n"
+            run_one "r${repeat}_weak_chain_rdf-lazy_t${n}" bench_chain.py \
             --input "$weak_ds" --impl rdf-lazy --threads "$n"
-        run_one "r${repeat}_weak_eff_jit_t${n}" bench_efficiency.py \
-            --input "$weak_ds" --impl jit --threads "$n"
+            run_one "r${repeat}_weak_eff_jit_t${n}" bench_efficiency.py \
+                --input "$weak_ds" --impl jit --threads "$n"
+        done
     done
-done
 fi
 
 # T4: single-threaded, because the number of event loops is a property of how the query was
 # written rather than of the machine.
 if has_test qstruct; then
-echo "=== T4 query structure: chain lengths $CHAIN_LENS ==="
-for repeat in $(seq 1 "$REPEATS_QSTRUCT"); do
-    for len in $CHAIN_LENS; do
-        for impl in rdf-lazy rdf-eager rdf-report; do
-            run_one "r${repeat}_qstruct_chain_${impl}_l${len}" bench_chain.py \
+    echo "=== T4 query structure: chain lengths $CHAIN_LENS ==="
+    for repeat in $(seq 1 "$REPEATS_QSTRUCT"); do
+        for len in $CHAIN_LENS; do
+            for impl in rdf-lazy rdf-eager rdf-report; do
+                run_one "r${repeat}_qstruct_chain_${impl}_l${len}" bench_chain.py \
                 --input "$DS_IMPL" --impl "$impl" --chain-len "$len"
         done
     done
@@ -673,13 +711,13 @@ fi
 if has_test impl; then
 echo "=== T5 implementations on $(basename "$DS_IMPL")${TASKSET_BIN:+, pinned to core $PIN_CORE}${ONLY_USED:+, plotted variants only} ==="
 export PINNED=1
-for repeat in $(seq 1 "$REPEATS_IMPL"); do
+    for repeat in $(seq 1 "$REPEATS_IMPL"); do
     run_one "r${repeat}_impl_filter_rdf" bench_filter.py --input "$DS_IMPL" --impl rdf
     if [[ -z "$ONLY_USED" ]]; then
         run_one "r${repeat}_impl_filter_python_vector" bench_filter.py \
             --input "$DS_IMPL" --impl python --mode vector
     fi
-    run_one "r${repeat}_impl_filter_python_loop" bench_filter.py \
+        run_one "r${repeat}_impl_filter_python_loop" bench_filter.py \
         --input "$DS_IMPL" --impl python --mode loop
     run_one "r${repeat}_impl_filter_uproot" bench_filter.py --input "$DS_IMPL" --impl uproot
 
@@ -696,7 +734,7 @@ for repeat in $(seq 1 "$REPEATS_IMPL"); do
         run_one "r${repeat}_impl_eff_python_vector" bench_efficiency.py \
             --input "$DS_IMPL" --impl python --mode vector
     fi
-    run_one "r${repeat}_impl_eff_python_loop" bench_efficiency.py \
+        run_one "r${repeat}_impl_eff_python_loop" bench_efficiency.py \
         --input "$DS_IMPL" --impl python --mode loop
     run_one "r${repeat}_impl_eff_uproot" bench_efficiency.py --input "$DS_IMPL" --impl uproot
 done

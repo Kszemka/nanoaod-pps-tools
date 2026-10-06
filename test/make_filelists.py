@@ -10,7 +10,10 @@ no branch that differs is read, which is not a property worth resting a benchmar
 Two uses:
 
   1. Before the transfer, on the lxplus inventory: --transfer-list writes the selected paths
-     relative to --strip-prefix, ready for `rsync -R --files-from`.
+     relative to --strip-prefix, ready for `rsync -R --files-from`. On a remote inventory of
+     CERN Open Data, with --max-gb and --era-order, it writes the URLs fetch_opendata.sh takes.
+     Open Data files differ in schema (HLT menus change between runs), so --any-schema keeps
+     them all; the benchmark columns are checked in every file regardless.
   2. After it, on the Ares inventory: writes into --out-dir
        core.txt       T1 (and T6 via make_slim.py): up to --core-events or --core-gb
        weak_<N>.txt   T2: subsets of core.txt with ~N x (core events / max N) events each
@@ -59,8 +62,41 @@ def eligible(rows, args):
     events_by_schema = defaultdict(int)
     for row in out:
         events_by_schema[row["schema"]] += row["entries"]
+    if args.any_schema:
+        return sorted(out, key=lambda r: r["path"]), " ".join(sorted(events_by_schema))
     schema = args.schema or max(events_by_schema, key=events_by_schema.get)
     return sorted((r for r in out if r["schema"] == schema), key=lambda r: r["path"]), schema
+
+
+def print_schemas(files):
+    groups = defaultdict(lambda: [0, 0, 0, 0])
+    for row in files:
+        g = groups[row["schema"]]
+        g[0] += 1
+        g[1] += row["entries"]
+        g[2] += row["size_bytes"]
+        g[3] = row.get("n_branches", "")
+    print(f"  {'schema':12} {'branches':>8} {'files':>5} {'events':>12} {'GB':>8}")
+    for schema, (n, events, size, branches) in sorted(groups.items(), key=lambda kv: -kv[1][1]):
+        print(f"  {schema:12} {branches:>8} {n:>5} {events:>12} {size / 1e9:>8.1f}")
+
+
+def within_budget(files, max_gb, era_order):
+    """
+    Files in --era-order (eras not named come last), each file within an era in path order,
+    taken while the running total stays within max_gb.
+    """
+    rank = {era: i for i, era in enumerate(era_order or [])}
+    ordered = sorted(files, key=lambda r: (rank.get(r.get("era"), len(rank)), r["path"]))
+    if not max_gb:
+        return ordered
+    chosen, size = [], 0
+    for row in ordered:
+        if size + row["size_bytes"] > max_gb * 1e9:
+            break
+        chosen.append(row)
+        size += row["size_bytes"]
+    return chosen
 
 
 def closest_subset(files, target, tolerance=0.02):
@@ -105,11 +141,17 @@ def main():
     parser.add_argument("--run", help="keep one run only, e.g. 369998")
     parser.add_argument("--version", help="keep one processing version, e.g. PromptReco-v21141959")
     parser.add_argument("--schema", help="schema hash to use instead of the largest one")
+    parser.add_argument("--any-schema", action="store_true",
+                        help="keep every schema; safe as long as the benchmark columns are in all")
     parser.add_argument("--min-pps", type=float, default=0.01,
                         help="minimum fraction of events with nPPSLocalTrack > 0")
     parser.add_argument("--transfer-list", help="write the selected paths here and stop")
     parser.add_argument("--strip-prefix", default="",
                         help="with --transfer-list: removed from the front of every path")
+    parser.add_argument("--max-gb", type=float,
+                        help="with --transfer-list: stop adding files at this total size")
+    parser.add_argument("--era-order", nargs="+",
+                        help="with --transfer-list: eras to fill --max-gb from, in this order")
     parser.add_argument("--out-dir", help="where the lists go (default: next to the inventory)")
     parser.add_argument("--core-events", type=float, default=45e6)
     parser.add_argument("--core-gb", type=float, default=60.0,
@@ -125,14 +167,21 @@ def main():
     summary = describe(files)
     print(f"eligible: {summary['files']} files, {summary['events']} events, "
           f"{summary['gb']} GB, schema {schema}")
+    if args.any_schema:
+        print_schemas(files)
 
     if args.transfer_list:
+        selected = within_budget(files, args.max_gb, args.era_order)
         prefix = args.strip_prefix.rstrip("/") + "/" if args.strip_prefix else ""
         with open(args.transfer_list, "w") as f:
-            for row in files:
+            for row in selected:
                 path = row["path"]
                 f.write((path[len(prefix):] if prefix and path.startswith(prefix) else path) + "\n")
-        print(f"{len(files)} paths -> {args.transfer_list}")
+        chosen = describe(selected)
+        print(f"{chosen['files']} paths, {chosen['events']} events, {chosen['gb']} GB "
+              f"-> {args.transfer_list}")
+        if args.any_schema:
+            print_schemas(selected)
         return 0
 
     out_dir = args.out_dir or os.path.dirname(os.path.abspath(args.inventory))

@@ -1,0 +1,348 @@
+=== NanoAOD PPS examples: 18530C3E-A0A2-6641-B816-434F02E2D628.root ===
+
+Tree 'Events': 700433 events
+
+--------------------------------------------------------------------------------
+--- PPS & Proton Variables Data (first 5 events with nPPSLocalTrack > 0) ---
+Entries: [112517, 112518, 112521, 112522, 112524]
+
+=== Data for variable: nProton_multiRP ===
+Type: UInt_t
+  Event 112517: 0
+  Event 112518: 0
+  Event 112521: 1
+  Event 112522: 0
+  Event 112524: 0
+
+=== Data for variable: Proton_multiRP_t ===
+Type: Float_t
+  Event 112517: []
+  Event 112518: []
+  Event 112521: [-0.052295684814453125]
+  Event 112522: []
+  Event 112524: []
+
+=== Data for variable: Proton_multiRP_thetaX ===
+Type: Float_t
+  Event 112517: []
+  Event 112518: []
+  Event 112521: [-1.2919772416353226e-06]
+  Event 112522: []
+  Event 112524: []
+
+=== Data for variable: Proton_multiRP_thetaY ===
+Type: Float_t
+  Event 112517: []
+  Event 112518: []
+  Event 112521: [-3.508478403091431e-05]
+  Event 112522: []
+  Event 112524: []
+
+=== Data for variable: Proton_multiRP_time ===
+Type: Float_t
+  Event 112517: []
+  Event 112518: []
+  Event 112521: [0.0]
+  Event 112522: []
+  Event 112524: []
+
+=== Data for variable: Proton_multiRP_timeUnc ===
+Type: Float_t
+  Event 112517: []
+  Event 112518: []
+  Event 112521: [0.0]
+  Event 112522: []
+  Event 112524: []
+
+=== Data for variable: Proton_multiRP_xi ===
+Type: Float_t
+  Event 112517: []
+  Event 112518: []
+  Event 112521: [0.05966949462890625]
+  Event 112522: []
+  Event 112524: []
+
+=== Data for variable: Proton_multiRP_arm ===
+Type: Int_t
+  Event 112517: []
+  Event 112518: []
+  Event 112521: [0]
+  Event 112522: []
+  Event 112524: []
+
+=== Data for variable: nPPSLocalTrack ===
+Type: UInt_t
+  Event 112517: 2
+  Event 112518: 1
+  Event 112521: 2
+  Event 112522: 1
+  Event 112524: 1
+
+=== Data for variable: PPSLocalTrack_x ===
+Type: Float_t
+  Event 112517: [5.570068359375, 4.03271484375]
+  Event 112518: [10.333984375]
+  Event 112521: [6.41357421875, 6.39111328125]
+  Event 112522: [5.29052734375]
+  Event 112524: [2.346435546875]
+
+=== Data for variable: PPSLocalTrack_y ===
+Type: Float_t
+  Event 112517: [-0.209686279296875, -1.09033203125]
+  Event 112518: [0.4639892578125]
+  Event 112521: [0.4471435546875, 0.54254150390625]
+  Event 112522: [-0.251800537109375]
+  Event 112524: [-0.027040481567382812]
+
+=== Data for variable: PPSLocalTrack_time ===
+Type: Float_t
+  Event 112517: [0.0, 0.0]
+  Event 112518: [0.0]
+  Event 112521: [0.0, 0.0]
+  Event 112522: [0.0]
+  Event 112524: [0.0]
+
+=== Data for variable: PPSLocalTrack_timeUnc ===
+Type: Float_t
+  Event 112517: [0.0, 0.0]
+  Event 112518: [0.0]
+  Event 112521: [0.0, 0.0]
+  Event 112522: [0.0]
+  Event 112524: [0.0]
+
+=== Data for variable: PPSLocalTrack_multiRPProtonIdx ===
+Type: Int_t
+  Event 112517: [-1, -1]
+  Event 112518: [-1]
+  Event 112521: [0, 0]
+  Event 112522: [-1]
+  Event 112524: [-1]
+
+=== Data for variable: PPSLocalTrack_singleRPProtonIdx ===
+Type: Int_t
+  Event 112517: [0, 1]
+  Event 112518: [0]
+  Event 112521: [0, 1]
+  Event 112522: [0]
+  Event 112524: [0]
+
+=== Data for variable: PPSLocalTrack_decRPId ===
+Type: Int_t
+  Event 112517: [2, 103]
+  Event 112518: [3]
+  Event 112521: [2, 3]
+  Event 112522: [3]
+  Event 112524: [3]
+
+=== Data for variable: PPSLocalTrack_rpType ===
+Type: Int_t
+  Event 112517: [3, 3]
+  Event 112518: [3]
+  Event 112521: [3, 3]
+  Event 112522: [3]
+  Event 112524: [3]
+
+=== Data for variable: nProton_singleRP ===
+Type: UInt_t
+  Event 112517: 2
+  Event 112518: 1
+  Event 112521: 2
+  Event 112522: 1
+  Event 112524: 1
+
+=== Data for variable: Proton_singleRP_thetaY ===
+Type: Float_t
+  Event 112517: [5.78463077545166e-05, 0.0002987384796142578]
+  Event 112518: [-1.9237399101257324e-05]
+  Event 112521: [-6.645917892456055e-05, -5.751848220825195e-05]
+  Event 112522: [4.83393669128418e-05]
+  Event 112524: [-4.217028617858887e-06]
+
+=== Data for variable: Proton_singleRP_xi ===
+Type: Float_t
+  Event 112517: [0.05277252197265625, 0.04473876953125]
+  Event 112518: [0.090240478515625]
+  Event 112521: [0.05982208251953125, 0.05980682373046875]
+  Event 112522: [0.05054473876953125]
+  Event 112524: [0.02378082275390625]
+
+=== Data for variable: Proton_singleRP_decRPId ===
+Type: Int_t
+  Event 112517: [2, 103]
+  Event 112518: [3]
+  Event 112521: [2, 3]
+  Event 112522: [3]
+  Event 112524: [3]
+
+--------------------------------------------------------------------------------
+--- PPS & Proton Variables Data (first 5 double-arm events: track in RP < 100 and in RP >= 100) ---
+Entries: [112517, 112526, 112558, 112590, 112617]
+
+=== Data for variable: nProton_multiRP ===
+Type: UInt_t
+  Event 112517: 0
+  Event 112526: 1
+  Event 112558: 0
+  Event 112590: 0
+  Event 112617: 1
+
+=== Data for variable: Proton_multiRP_t ===
+Type: Float_t
+  Event 112517: []
+  Event 112526: [-0.012102127075195312]
+  Event 112558: []
+  Event 112590: []
+  Event 112617: [-0.4466552734375]
+
+=== Data for variable: Proton_multiRP_thetaX ===
+Type: Float_t
+  Event 112517: []
+  Event 112526: [-8.541159331798553e-06]
+  Event 112558: []
+  Event 112590: []
+  Event 112617: [-6.186962127685547e-05]
+
+=== Data for variable: Proton_multiRP_thetaY ===
+Type: Float_t
+  Event 112517: []
+  Event 112526: [8.761882781982422e-06]
+  Event 112558: []
+  Event 112590: []
+  Event 112617: [8.696317672729492e-05]
+
+=== Data for variable: Proton_multiRP_time ===
+Type: Float_t
+  Event 112517: []
+  Event 112526: [0.0]
+  Event 112558: []
+  Event 112590: []
+  Event 112617: [0.0]
+
+=== Data for variable: Proton_multiRP_timeUnc ===
+Type: Float_t
+  Event 112517: []
+  Event 112526: [0.0]
+  Event 112558: []
+  Event 112590: []
+  Event 112617: [0.0]
+
+=== Data for variable: Proton_multiRP_xi ===
+Type: Float_t
+  Event 112517: []
+  Event 112526: [0.0810394287109375]
+  Event 112558: []
+  Event 112590: []
+  Event 112617: [0.086669921875]
+
+=== Data for variable: Proton_multiRP_arm ===
+Type: Int_t
+  Event 112517: []
+  Event 112526: [0]
+  Event 112558: []
+  Event 112590: []
+  Event 112617: [0]
+
+=== Data for variable: nPPSLocalTrack ===
+Type: UInt_t
+  Event 112517: 2
+  Event 112526: 3
+  Event 112558: 2
+  Event 112590: 2
+  Event 112617: 3
+
+=== Data for variable: PPSLocalTrack_x ===
+Type: Float_t
+  Event 112517: [5.570068359375, 4.03271484375]
+  Event 112526: [8.9296875, 8.87939453125, 6.860107421875]
+  Event 112558: [2.5433349609375, 4.776123046875]
+  Event 112590: [2.3184814453125, 9.60546875]
+  Event 112617: [8.4033203125, 8.19482421875, 10.29248046875]
+
+=== Data for variable: PPSLocalTrack_y ===
+Type: Float_t
+  Event 112517: [-0.209686279296875, -1.09033203125]
+  Event 112526: [-0.015463829040527344, -0.051418304443359375, -1.40283203125]
+  Event 112558: [0.24810791015625, 1.2015380859375]
+  Event 112590: [0.004361629486083984, 0.156463623046875]
+  Event 112617: [-1.288330078125, -1.560302734375, -0.646240234375]
+
+=== Data for variable: PPSLocalTrack_time ===
+Type: Float_t
+  Event 112517: [0.0, 0.0]
+  Event 112526: [0.0, 0.0, 0.0]
+  Event 112558: [0.0, 0.0]
+  Event 112590: [0.0, 0.0]
+  Event 112617: [0.0, 0.0, 0.0]
+
+=== Data for variable: PPSLocalTrack_timeUnc ===
+Type: Float_t
+  Event 112517: [0.0, 0.0]
+  Event 112526: [0.0, 0.0, 0.0]
+  Event 112558: [0.0, 0.0]
+  Event 112590: [0.0, 0.0]
+  Event 112617: [0.0, 0.0, 0.0]
+
+=== Data for variable: PPSLocalTrack_multiRPProtonIdx ===
+Type: Int_t
+  Event 112517: [-1, -1]
+  Event 112526: [0, 0, -1]
+  Event 112558: [-1, -1]
+  Event 112590: [-1, -1]
+  Event 112617: [0, 0, -1]
+
+=== Data for variable: PPSLocalTrack_singleRPProtonIdx ===
+Type: Int_t
+  Event 112517: [0, 1]
+  Event 112526: [0, 1, 2]
+  Event 112558: [0, 1]
+  Event 112590: [0, 1]
+  Event 112617: [0, 1, 2]
+
+=== Data for variable: PPSLocalTrack_decRPId ===
+Type: Int_t
+  Event 112517: [2, 103]
+  Event 112526: [2, 3, 103]
+  Event 112558: [3, 103]
+  Event 112590: [3, 103]
+  Event 112617: [2, 3, 103]
+
+=== Data for variable: PPSLocalTrack_rpType ===
+Type: Int_t
+  Event 112517: [3, 3]
+  Event 112526: [3, 3, 3]
+  Event 112558: [3, 3]
+  Event 112590: [3, 3]
+  Event 112617: [3, 3, 3]
+
+=== Data for variable: nProton_singleRP ===
+Type: UInt_t
+  Event 112517: 2
+  Event 112526: 3
+  Event 112558: 2
+  Event 112590: 2
+  Event 112617: 3
+
+=== Data for variable: Proton_singleRP_thetaY ===
+Type: Float_t
+  Event 112517: [5.78463077545166e-05, 0.0002987384796142578]
+  Event 112526: [9.778887033462524e-07, 2.738088369369507e-06, 8.755922317504883e-05]
+  Event 112558: [4.416704177856445e-05, -0.00017321109771728516]
+  Event 112590: [6.686896085739136e-07, -5.651265382766724e-06]
+  Event 112617: [9.244680404663086e-05, 9.608268737792969e-05, 2.1144747734069824e-05]
+
+=== Data for variable: Proton_singleRP_xi ===
+Type: Float_t
+  Event 112517: [0.05277252197265625, 0.04473876953125]
+  Event 112526: [0.0796661376953125, 0.0794677734375, 0.0721282958984375]
+  Event 112558: [0.025669097900390625, 0.052215576171875]
+  Event 112590: [0.023509979248046875, 0.09625244140625]
+  Event 112617: [0.075653076171875, 0.0742340087890625, 0.101959228515625]
+
+=== Data for variable: Proton_singleRP_decRPId ===
+Type: Int_t
+  Event 112517: [2, 103]
+  Event 112526: [2, 3, 103]
+  Event 112558: [3, 103]
+  Event 112590: [3, 103]
+  Event 112617: [2, 3, 103]
+

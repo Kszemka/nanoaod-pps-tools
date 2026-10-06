@@ -1,0 +1,250 @@
+TClass::Init:0: RuntimeWarning: no dictionary for class edm::Hash<1> is available
+TClass::Init:0: RuntimeWarning: no dictionary for class edm::ParameterSetBlob is available
+TClass::Init:0: RuntimeWarning: no dictionary for class edm::ProcessHistory is available
+TClass::Init:0: RuntimeWarning: no dictionary for class edm::ProcessConfiguration is available
+TClass::Init:0: RuntimeWarning: no dictionary for class pair<edm::Hash<1>,edm::ParameterSetBlob> is available
+TFile**		18530C3E-A0A2-6641-B816-434F02E2D628.root	
+ TFile*		18530C3E-A0A2-6641-B816-434F02E2D628.root	
+  KEY: TObjString	tag;1	Collectable string class
+  KEY: TTree	Events;1	Events
+  KEY: TTree	LuminosityBlocks;1	LuminosityBlocks
+  KEY: TTree	Runs;1	Runs
+  KEY: TTree	MetaData;1	Job metadata
+  KEY: TTree	ParameterSets;1	Parameter sets
+ROOT was loaded successfully
+ROOT version: 6.40.04
+
+=== NanoAOD Analysis: 18530C3E-A0A2-6641-B816-434F02E2D628.root ===
+
+Objects in ROOT file:
+
+Found trees: ['Events', 'LuminosityBlocks', 'Runs', 'MetaData', 'ParameterSets']
+
+Tree 'Events': 700433 events
+Tree 'LuminosityBlocks': 769 events
+Tree 'Runs': 2 events
+Tree 'MetaData': 1 events
+Tree 'ParameterSets': 13463 events
+
+Total events in all trees: 714668
+
+--------------------------------------------------------------------------------
+
+=== PPS & Proton Variables Analysis (regex: *PPS* OR *proton*) ===
+Found PPS & Proton variables (21):
+
+   1. PPSLocalTrack_decRPId
+   2. PPSLocalTrack_multiRPProtonIdx
+   3. PPSLocalTrack_rpType
+   4. PPSLocalTrack_singleRPProtonIdx
+   5. PPSLocalTrack_time
+   6. PPSLocalTrack_timeUnc
+   7. PPSLocalTrack_x
+   8. PPSLocalTrack_y
+   9. Proton_multiRP_arm
+  10. Proton_multiRP_t
+  11. Proton_multiRP_thetaX
+  12. Proton_multiRP_thetaY
+  13. Proton_multiRP_time
+  14. Proton_multiRP_timeUnc
+  15. Proton_multiRP_xi
+  16. Proton_singleRP_decRPId
+  17. Proton_singleRP_thetaY
+  18. Proton_singleRP_xi
+  19. nPPSLocalTrack
+  20. nProton_multiRP
+  21. nProton_singleRP
+
+--- PPS & Proton Variables Data (first 5 events) ---
+
+=== Data for variable: PPSLocalTrack_decRPId ===
+Type: Int_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: PPSLocalTrack_multiRPProtonIdx ===
+Type: Int_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: PPSLocalTrack_rpType ===
+Type: Int_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: PPSLocalTrack_singleRPProtonIdx ===
+Type: Int_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: PPSLocalTrack_time ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: PPSLocalTrack_timeUnc ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: PPSLocalTrack_x ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: PPSLocalTrack_y ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: Proton_multiRP_arm ===
+Type: Int_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: Proton_multiRP_t ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: Proton_multiRP_thetaX ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: Proton_multiRP_thetaY ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: Proton_multiRP_time ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: Proton_multiRP_timeUnc ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: Proton_multiRP_xi ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: Proton_singleRP_decRPId ===
+Type: Int_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: Proton_singleRP_thetaY ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: Proton_singleRP_xi ===
+Type: Float_t
+First 5 events:
+  Event  0: []
+  Event  1: []
+  Event  2: []
+  Event  3: []
+  Event  4: []
+
+=== Data for variable: nPPSLocalTrack ===
+Type: UInt_t
+First 5 events:
+  Event  0: 0
+  Event  1: 0
+  Event  2: 0
+  Event  3: 0
+  Event  4: 0
+
+=== Data for variable: nProton_multiRP ===
+Type: UInt_t
+First 5 events:
+  Event  0: 0
+  Event  1: 0
+  Event  2: 0
+  Event  3: 0
+  Event  4: 0
+
+=== Data for variable: nProton_singleRP ===
+Type: UInt_t
+First 5 events:
+  Event  0: 0
+  Event  1: 0
+  Event  2: 0
+  Event  3: 0
+  Event  4: 0
+
+--------------------------------------------------------------------------------
+

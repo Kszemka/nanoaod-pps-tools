@@ -10,7 +10,7 @@ event-loop time under ImplicitMT(n) is fitted with
 a/n is the work that divides among the threads, so a grows with the number of events; b*n is
 what every extra thread costs on top (its own reader and tree, its share of the task
 scheduling), which does not. The minimum is at n* = sqrt(a/b): the optimum grows as the square
-root of the work, which is why ds_x32 peaks at 8-16 threads and 1 TB is still rising at 48.
+root of the work.
 
 Writes 14_optimum_vs_size.png (fitted n* and the measured best thread count against events,
 with a sqrt(N) guide and each machine's core count) and prints the fit for the text.
@@ -20,7 +20,7 @@ the range of thread counts whose median loop time is within 5% of the minimum --
 run-to-run spread on Helios -- and is drawn as a whisker on the fastest point. A fitted n*
 beyond the sweep is not a measurement; it is drawn at the last point with an arrow.
 
-    plot_optimum.py --results results-ares results-ares-big results-helios-x32 ... [--out DIR]
+    plot_optimum.py --results results/helios/full-11m results/helios/full-100m ... [--out DIR]
 
 Needs only matplotlib, like plot_results.py.
 """
@@ -31,7 +31,7 @@ import os
 import sys
 
 from plot_results import CORE_TEST_COLOUR, CORE_TEST_LABEL, core_rows, dedupe_labels, \
-    load_records, median
+    flag_disturbed, load_records, median
 
 MACHINE_MARKER = {"ares": "o", "helios": "s"}
 PLATEAU = 1.05
@@ -86,6 +86,7 @@ def fit_optimum(points):
 def campaign(results_dir):
     """One entry per benchmark of a directory's T1 sweep."""
     records, _ = dedupe_labels(load_records(results_dir))
+    flag_disturbed(records)
     ok = [r for r in records if r.get("status") == "ok"]
     strong = [r for r in core_rows(ok, "strong") if r.get("threads")]
     entries = []
@@ -198,8 +199,11 @@ def plot(entries, out_dir):
         ax.grid(alpha=0.3, which="both")
     axes[0][0].set_ylabel("optimal thread count")
     axes[0][0].legend(fontsize=8, loc="lower right")
-    fig.suptitle(r"Strong-scaling optimum against input size: $T(n) = c + a/n + b\,n$, "
-                 r"$n^* = \sqrt{a/b}$")
+    model = r"$T(n) = c + a/n + b\,n$, $n^* = \sqrt{a/b}$"
+    if len(tests) == 1:
+        axes[0][0].set_title(f"{CORE_TEST_LABEL[tests[0]]}: {model}")
+    else:
+        fig.suptitle(f"Strong-scaling optimum against input size: {model}")
     fig.tight_layout()
     path = os.path.join(out_dir, "14_optimum_vs_size.png")
     fig.savefig(path, dpi=140)
@@ -213,6 +217,8 @@ def main():
     parser.add_argument("--results", nargs="+", required=True,
                         help="results directories, each with a raw.jsonl holding a T1 sweep")
     parser.add_argument("--out", default=".", help="directory for 14_optimum_vs_size.png")
+    parser.add_argument("--tests", nargs="+", choices=list(CORE_TEST_LABEL),
+                        help="benchmarks to draw (default: all); the table always lists all")
     args = parser.parse_args()
 
     entries = []
@@ -226,7 +232,11 @@ def main():
     entries.sort(key=lambda e: (e["machine"], e["events"], list(CORE_TEST_LABEL).index(e["test"])))
     print_table(entries)
     os.makedirs(args.out, exist_ok=True)
-    print(f"  {plot(entries, args.out)}")
+    drawn = [e for e in entries if not args.tests or e["test"] in args.tests]
+    if not drawn:
+        print(f"WARNING: no T1 sweep for {' '.join(args.tests)}", file=sys.stderr)
+        return 1
+    print(f"  {plot(drawn, args.out)}")
     return 0
 
 

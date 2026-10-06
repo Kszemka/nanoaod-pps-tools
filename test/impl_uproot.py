@@ -79,17 +79,18 @@ def filter_uproot(path, rp_id):
 
 # --- TEST 2: filter chain --------------------------------------------------------------------
 
-def _step_mask(name, data, rp_id):
+def _step_mask(name, data, rp_id, period=bc.DEFAULT_PERIOD):
     """Boolean per-event mask for one chain step, evaluated in compiled code."""
     column = data[bc.CHAIN_COLUMNS[name]]
     if name == "pps":
         return ak.to_numpy(column) > 0
     if name == "double_arm":
-        left = ak.any((column == bc.ARM_LEFT_RPS[0]) | (column == bc.ARM_LEFT_RPS[1]), axis=1)
-        right = ak.any((column == bc.ARM_RIGHT_RPS[0]) | (column == bc.ARM_RIGHT_RPS[1]), axis=1)
+        (l1, l2), (r1, r2) = bc.PERIODS[period]["arms"]
+        left = ak.any((column == l1) | (column == l2), axis=1)
+        right = ak.any((column == r1) | (column == r2), axis=1)
         return ak.to_numpy(left & right)
     if name == "diamond":
-        return ak.to_numpy(ak.any(column == bc.DIAMOND_RP_TYPE, axis=1))
+        return ak.to_numpy(ak.any(column == bc.PERIODS[period]["rp_type"], axis=1))
     if name == "rp_id":
         return ak.to_numpy(ak.any(column == rp_id, axis=1))
     if name == "xi":
@@ -105,7 +106,7 @@ def _step_mask(name, data, rp_id):
     return ak.to_numpy(ak.any(column != 0, axis=1))
 
 
-def chain_uproot(path, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base"):
+def chain_uproot(path, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base", period=bc.DEFAULT_PERIOD):
     data = _read(path, bc.chain_columns(chain_len, chain))
     n_events = len(data)
     counts = [n_events]
@@ -113,7 +114,7 @@ def chain_uproot(path, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base"):
     # What RDataFrame does: later steps only ever look at events that got past the earlier ones.
     surviving = np.arange(n_events)
     for name in bc.chain_steps(chain_len, chain):
-        surviving = surviving[_step_mask(name, data[surviving], rp_id)]
+        surviving = surviving[_step_mask(name, data[surviving], rp_id, period)]
         counts.append(len(surviving))
     return {"final": counts[-1], "intermediate": counts, "event_loops": 1}
 

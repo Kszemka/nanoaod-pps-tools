@@ -71,14 +71,15 @@ def _any_in(jagged, values):
     )
 
 
-def _step_mask(name, column, rp_id):
+def _step_mask(name, column, rp_id, period=bc.DEFAULT_PERIOD):
     """Boolean per-event mask for one chain step, over whichever events it is handed."""
     if name == "pps":
         return np.asarray(column) > 0
     if name == "double_arm":
-        return _any_in(column, bc.ARM_LEFT_RPS) & _any_in(column, bc.ARM_RIGHT_RPS)
+        left, right = bc.PERIODS[period]["arms"]
+        return _any_in(column, left) & _any_in(column, right)
     if name == "diamond":
-        return _any_in(column, [bc.DIAMOND_RP_TYPE])
+        return _any_in(column, [bc.PERIODS[period]["rp_type"]])
     if name == "rp_id":
         return _any_in(column, [rp_id])
     if name == "single_rp_idx":
@@ -102,7 +103,7 @@ def _any_where(jagged, predicate):
     )
 
 
-def chain_python(df, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base"):
+def chain_python(df, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base", period=bc.DEFAULT_PERIOD):
     # Every column the chain needs is pulled up front -- unlike RDataFrame, there is no way to
     # read the later columns only for the events that survived the earlier filters. All of the
     # filtering happens here too, including the nPPSLocalTrack > 0 step: leaving it to
@@ -118,7 +119,7 @@ def chain_python(df, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base"):
     surviving = np.arange(n_events)
     for name in bc.chain_steps(chain_len, chain):
         column = data[bc.CHAIN_COLUMNS[name]]
-        surviving = surviving[_step_mask(name, column[surviving], rp_id)]
+        surviving = surviving[_step_mask(name, column[surviving], rp_id, period)]
         counts.append(len(surviving))
     return {"final": counts[-1], "intermediate": counts, "event_loops": 1}
 

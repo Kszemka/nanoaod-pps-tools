@@ -14,6 +14,13 @@ Jedna ścieżka: `slurm_benchmark.sbatch` → `run_all.sh` → `validate.py` + `
 | `make_bigset.sh` | tylko kopiuje: `ds_1.root` … `ds_96.root` obok `ds_x32.root`, czyli wejście `DATASET=big` |
 | `inventory_files.py` | CSV z opisem plików: zdarzenia, klastry, schemat, kodek, obecność PPS; sprawdza transfer |
 | `make_filelists.py` | z inwentaryzacji buduje listy `core.txt`, `weak_N.txt`, `impl.txt` dla `DATASET=real` |
+| `opendata_index.py` | lista plików NanoAOD z CERN Open Data (URI, rozmiar, adler32) z API portalu |
+| `fetch_opendata.sh` | pobiera pliki Open Data z listy, sprawdza adler32, wznawia przerwane pobieranie |
+| `opendata_helios.sh` | na węźle logowania Heliosa wysyła pobieranie Open Data i po nim benchmark (`afterok`) |
+| `slurm_fetch_opendata.sbatch` | zadanie 1: indeks, skan, wybór ~1 TB, pobranie, weryfikacja, listy, `READY` |
+| `slurm_make_bigset.sbatch` | `make_bigset.sh` jako osobne zadanie, równolegle z pobieraniem |
+| `slurm_real_vs_synthetic.sbatch` | zadanie 2: łańcuch `--period 2016` na Open Data i punkty kontrolne na `ds_1`–`ds_96` |
+| `plot_real_vs_synthetic.py` | porównanie: zbiór sztuczny, kontrola i Open Data na jednym rysunku i w tabeli |
 | `bench_filter.py`, `bench_chain.py`, `bench_efficiency.py` | pojedynczy pomiar (TEST 1–3) |
 | `bench_common.py` | parser argumentów, fazy czasu, liczniki bajtów i RSS, rekord `BENCH` |
 | `impl_rdf.py`, `impl_python.py`, `impl_uproot.py` | implementacje mierzonych operacji |
@@ -154,6 +161,95 @@ różni. Inwentaryzacja na Aresie liczy też `pps_fraction` (czyta tylko dwie ma
 **Pojemność.** `hpc-fs` na Aresie pokazuje limity; scratch ma limity liczone w TB, więc
 ~100–200 GB się zmieści. Scratch jest czyszczony po ~30 dniach nieużywania. Rzeczywistym
 ograniczeniem jest RAM węzła na page cache, stąd limit 60 GB dla `core.txt`.
+
+## Open Data (Run 2) na Helios
+
+CERN Open Data ma 32 zbiory CMS NanoAOD, wszystkie `UL2016_MiniAODv2_NanoAODv9`: Run2016H
+(~1.03 TB) i Run2016G (~1.05 TB), pliki po 1–2.5 GB. Dane są publiczne, więc nie są potrzebne
+konto, certyfikat ani proxy.
+
+Całość to trzy zadania Slurm wysłane jedną komendą z węzła logowania (z repozytorium na
+scratchu): pobranie i kopie `ds_N` równolegle, benchmark po obu:
+
+```bash
+cd $SCRATCH/bench/nanoaod-pps-tools
+bash test/opendata_helios.sh                # pobranie + kopie, po nich benchmark
+bash test/opendata_helios.sh --fetch-only   # samo pobranie (i kopie, jeśli brakuje)
+bash test/opendata_helios.sh --bench-only   # dane już są (sprawdza READY)
+bash test/opendata_helios.sh --fetch-jobs 16 --streams 2 --max-gb 1040 --dry-run
+```
+
+- **Kopie** (`slurm_make_bigset.sbatch`, 8 CPU, 8 GB, do 4 h) to `make_bigset.sh`, czyli
+  `ds_1`–`ds_96.root` obok `ds_x32.root` w `$SCRATCH/bench/data`. Wysyłane tylko, jeśli którejś
+  kopii brakuje; postęp w `make-bigset-<id>.out`.
+- **Zadanie 1** (`slurm_fetch_opendata.sbatch`, 16 CPU, 16 GB, do 24 h, bez `--exclusive`) robi
+  kroki 1–5 poniżej w `$SCRATCH/bench/data2` (`OUT_DIR`): do 1040 GB (`MAX_GB`), Run2016H
+  przed Run2016G, `FETCH_JOBS=10` plików naraz, każdy `XRD_STREAMS` strumieniami `xrdcp`.
+  Najpierw sprawdza, czy węzeł ma sieć do CERN; postęp (pliki, GB, MB/s) jest w
+  `fetch-opendata-<id>.out`. Każdy krok pomija się, jeśli jego wynik już jest, więc przerwane
+  zadanie wystarczy wysłać ponownie (`--fetch-only`). Na końcu zapisuje `READY` z podsumowaniem.
+  Dane są obok `data/`, nie w nim: `STORAGE=memfs` kopiuje `data/` do RAM-u, a `DATASET=big`
+  zapisuje tam `lists/`.
+- **Zadanie 2** (`slurm_real_vs_synthetic.sbatch`, cały węzeł, 5 h) startuje tylko, gdy
+  pobranie i kopie skończą się sukcesem (`--dependency=afterok`, a przy porażce znika z kolejki dzięki
+  `--kill-on-invalid-dep=yes`). Na starcie sprawdza `READY`, `core.txt` i `ds_1`–`ds_96.root`,
+  potem po kolei: `run_all.sh` (walidacja i T1 łańcucha 5 filtrów z `--period 2016` na całym
+  Open Data, zimny odczyt, 1–192 wątki → `results-helios-opendata-1tb`) i `run_benchmark.sh` na
+  zbiorze sztucznym w tym samym zadaniu (1, 48, 144, 192 wątki → `results-helios-control-1tb`).
+  Kontrola pokazuje, czy Lustre zachowuje się tak jak w kampanii `full-1tb`. Bez kopii `ds_N`
+  (`--no-control`) zadanie 2 mierzy tylko Open Data, a porównanie idzie wprost do `full-1tb`.
+
+Jeśli węzły obliczeniowe nie mają sieci (zadanie 1 kończy się w kroku 0), to samo zadanie
+działa jako zwykły skrypt na węźle logowania, w `tmux`:
+`bash test/slurm_fetch_opendata.sbatch`, a potem `bash test/opendata_helios.sh --bench-only`.
+
+Po zadaniu 2 skopiuj oba katalogi do `results/helios/opendata-1tb` i `results/helios/control-1tb`:
+
+```bash
+python test/plot_real_vs_synthetic.py --synthetic results/helios/full-1tb \
+    --control results/helios/control-1tb --real results/helios/opendata-1tb \
+    --out results/helios/opendata-1tb
+```
+
+Ręcznie te same kroki wyglądają tak:
+
+```bash
+cd $SCRATCH/bench/data2                         # lub lxplus: tylko kroki 1-3
+T=$SCRATCH/bench/nanoaod-pps-tools/test
+# 1. indeks: wszystkie pliki z URI, rozmiarem i adler32, najpierw Run2016H
+python $T/opendata_index.py --era Run2016H Run2016G --output index.csv --urls scan.txt
+# 2. zdalna inwentaryzacja: metadane i dwie gałęzie PPS każdego pliku (kilka % objętości)
+python $T/inventory_files.py --list scan.txt --output remote.csv --jobs 8
+# 3. wybór: kolumny benchmarku, PPS w >= 1% zdarzeń, dowolny schemat, do 1040 GB, H przed G
+python $T/make_filelists.py --inventory remote.csv --any-schema --max-gb 1040 \
+    --era-order Run2016H Run2016G --transfer-list urls.txt
+# 4. pobranie (w tmux): <era>/<PD>/<plik>, adler32 sprawdzany przy każdym pliku
+$T/fetch_opendata.sh --urls urls.txt --index index.csv --out-dir $PWD --jobs 10
+# 5. weryfikacja (liczba zdarzeń i rozmiar plik po pliku) i listy benchmarku
+python $T/inventory_files.py --list local.txt --output helios.csv --compare remote.csv
+python $T/make_filelists.py --inventory helios.csv --any-schema --core-gb 1100 \
+    --core-events 1e10 --out-dir $PWD
+```
+
+`fetch_opendata.sh` używa `xrdcp` (`root://eospublic.cern.ch`), a bez niego `curl` przez
+`https://opendata.cern.ch/eos/...` (`--transport https`). Plik trafia pod docelową nazwę dopiero
+po zgodności rozmiaru i adler32. Ponowne uruchomienie tej samej komendy pobiera tylko brakujące
+pliki. Nieudane są w `failed.txt`, a `local.txt` to lista do kroku 5. `--dry-run` pokazuje, ile
+zostało do pobrania i ile jest miejsca (`df`; limit grantu pokazuje `hpc-fs`). `--streams N`
+dzieli każdy plik na N strumieni `xrdcp`; na końcu skrypt podaje średnią przepustowość.
+
+Różnice wobec Tier0 2023, które trzeba uwzględnić przy porównaniu wyników:
+
+- ~1350 gałęzi zamiast ~2000, więc mniejsza pamięć na wątek;
+- schemat zmienia się między runami (inne menu HLT), dlatego `--any-schema`. Kolumny benchmarku
+  są w każdym pliku, a TChain czyta tylko je;
+- w 2016 PPS miał tylko detektory paskowe: `PPSLocalTrack_rpType` = 3, garnki `decRPId` 2, 3,
+  102, 103. Nie ma garnków 23 i 123, diamentów (`rpType` 5) ani garnka 22, więc domyślny
+  łańcuch (`--period 2023`) odrzuca wszystko już na kroku `double_arm`, a `rp_fraction` w
+  inwentaryzacji wynosi 0. `bench_chain.py --period 2016` ma te same 5 kroków na garnkach z 2016
+  (ramiona 2|3 i 102|103, `strip`, garnek 3); na pliku z Run2016H: 700433 → 243848 → 27762 →
+  27762 → 24214 → 19459 zdarzeń;
+- część plików z wczesnego Run2016G nie ma PPS wcale (odpada przy `--min-pps`).
 
 ## Kampania
 
@@ -441,10 +537,10 @@ go z pierwszym biegiem, przesuwając powtórzenia drugiego o 1 (r1–r3 → r2�
 `rss_*.csv`:
 
 ```bash
-python test/merge_results.py --base results/helios/run1/results-helios-big \
-    --add results/helios/run2/results-helios-big --shift 1 \
-    --out results/helios/results-helios-big-merged
-THREAD_SCALE=linear python test/plot_results.py --results results/helios/results-helios-big-merged
+python test/merge_results.py --base results/helios/full-1tb-job1 \
+    --add results/helios/full-1tb-job2 --shift 1 \
+    --out results/helios/full-1tb
+THREAD_SCALE=linear python test/plot_results.py --results results/helios/full-1tb
 ```
 
 `THREAD_SCALE=linear` daje liniową oś wątków: przy siatce do 192 wątków zakres 96–192, gdzie leży
@@ -453,10 +549,12 @@ maksimum, zajmuje połowę osi, a nie jedną czwartą jak na osi logarytmicznej.
 Optimum względem rozmiaru, po skopiowaniu wyników na laptopa:
 
 ```bash
-python test/plot_optimum.py --results results/ares/results-ares-prefin results/ares/results-ares-big \
-    results/helios/run1/results-helios-{x32,c9,c32} results/helios/results-helios-big-merged \
-    --out results/helios/results-helios-big-merged
+python test/plot_optimum.py --results results/helios/full-{11m,100m,355m,1tb} \
+    --out results/helios/full-1tb --tests chain
 ```
+
+`--tests` wybiera panele rysunku (w pracy tylko łańcuch); tabela na konsoli zawsze obejmuje
+wszystkie trzy operacje.
 
 Tabela wypisuje też plateau: liczby wątków, dla których mediana czasu pętli jest w granicach 5%
 od najkrótszej (mniej więcej rozrzut powtórzeń na Heliosie). Na wykresie to wąs przy najszybszym
@@ -514,7 +612,7 @@ Każdy rekord ma też `io_rchar_loop` i `io_read_bytes_loop` z `/proc/self/io`. 
 `io_read_bytes_loop` nie jest dokładne (0,9–1,5 × odczytu), wiarygodne są `bytes_loop` i `rchar`.
 
 ```bash
-THREAD_SCALE=linear python test/plot_results.py --results results/helios/results-helios-slim11
+THREAD_SCALE=linear python test/plot_results.py --results results/helios/slim-1.5tb
 ```
 
 Dogrywka (~2 h): powtórzenia tam, gdzie pomiar był pojedynczy albo zakłócony przez chwilowe
@@ -529,6 +627,33 @@ export RESUME=1 REPEATS_WEAK=2 WEAK11_R3_SERIES="96" \
 sbatch --cpus-per-task=192 --mem=384000 -t 04:00:00 \
     --output=bench-helios-%j.out --error=bench-helios-%j.err test/slurm_benchmark.sbatch
 ```
+
+Druga dogrywka (~40 min): przy 144 wątkach 2 z 3 biegów były spowolnione (10–18 % więcej CPU
+na zdarzenie przy tym samym odczycie, czyli wątki czekały na Lustre). `STRONG11_R4_THREADS="144 176"`
+daje czwarte powtórzenie, a `STRONG11_R3_THREADS="144 176 192"` trzecie przy 176.
+
+Trzecia dogrywka (~2 h): dwa pełne przebiegi 96–192 wątków, żeby każdy punkt miał co najmniej
+4 pomiary. `STRONG11_EXTRA_REPEATS="5 6"` daje etykiety `r5_` i `r6_`; drugi przebieg idzie
+w odwrotnej kolejności (192 → 96), bo spowolnienia Lustre trafiają w kilka kolejnych biegów
+naraz. Listy z poprzednich dogrywek mogą zostać, bo `RESUME` i tak pomija zapisane biegi:
+
+```bash
+export MACHINE=helios DATASET=big TESTS="strong11" RESUME=1 \
+    DATA_DIR=$SCRATCH/bench/slim11 RESULTS=$SCRATCH/bench/results-helios-slim11 \
+    THREADS_LIST="1 4 8 12 16 24 32 48 64 80 96 112 128 144 160 176 192" \
+    STRONG11_R2_THREADS="96 112 128 144 160 176 192" \
+    STRONG11_R3_THREADS="144 176 192" STRONG11_R4_THREADS="144 176" \
+    STRONG11_EXTRA_REPEATS="5 6" STRONG11_EXTRA_THREADS="96 112 128 144 160 176 192"
+sbatch --cpus-per-task=192 --mem=384000 -t 03:00:00 \
+    --output=bench-helios-%j.out --error=bench-helios-%j.err test/slurm_benchmark.sbatch
+```
+
+Biegi zakłócone: `plot_results.py` pomija bieg, którego pętla trwa ponad 1,5 × medianę tej samej
+konfiguracji, o ile konfiguracja ma co najmniej 3 biegi (`OUTLIER_FACTOR`). Reguła jest ustalona
+z góry i ta sama dla wszystkich kampanii. Pominięte biegi zostają w `bench.csv` ze statusem
+`disturbed` i są wypisywane jako `DISTURBED: ...`. Na zbiorze slim są to r1 przy 192 wątkach
+(812 s) i r1 weak przy 96 (1108 s); na pełnych plikach reguła nie pomija niczego. Biegi wolniejsze
+o 5–15 % zostają: to zwykły rozrzut na współdzielonym Lustre.
 
 ## Uruchomienie lokalnie
 
@@ -546,9 +671,26 @@ pozwala podać mniejsze wejście.
 
 ## Wyniki
 
+Katalogi w `results/` (wszystkie wejścia czytane z dysku po wyczyszczeniu page cache, poza
+archiwum):
+
+| katalog | maszyna | dane | testy |
+|---|---|---|---|
+| `helios/full-1tb` | Helios | 96 kopii `ds_x32`, 1,07 mld zdarzeń, 1,04 TB | T1 do 192, T2 do 96; połączone `full-1tb-job1` i `full-1tb-job2` |
+| `helios/full-1tb-job1` | Helios | jak wyżej | pierwsze zadanie: T1 1–192, T2 1–96 |
+| `helios/full-1tb-job2` | Helios | jak wyżej | drugie zadanie: T1 64–192, 3 powtórzenia |
+| `helios/opendata-1tb` | Helios | Run 2 Open Data (Run2016H, potem G), ~1 TB, LZMA:9 | łańcuch `--period 2016`: T1 1–192; `15_real_vs_synthetic.png` |
+| `helios/control-1tb` | Helios | jak `full-1tb`, w tym samym zadaniu co `opendata-1tb` | łańcuch: T1 na 1, 48, 144, 192 |
+| `helios/full-11m` | Helios | `ds_x32`, 11,1 mln zdarzeń | T1 do 192, 3 powtórzenia |
+| `helios/full-100m` | Helios | 9 kopii, 99,9 mln zdarzeń | T1 do 192, 2 powtórzenia |
+| `helios/full-355m` | Helios | 32 kopie, 355 mln zdarzeń | T1 do 192 |
+| `helios/slim-1.5tb` | Helios | 96 plików slim (10 gałęzi), 29,8 mld zdarzeń, 1,54 TB | łańcuch 11 filtrów: T1 do 192, T2 do 96 |
+| `ares/single-core` | Ares | 1–9 kopii (do 99,9 mln) i 1 TB | seria rozmiarów i implementacji, T4 na 99,9 mln; T1/T2 na 1 TB do 48 |
+| `archive/ares-10gb-cached` | Ares | `ds_x1`–`ds_x32` i kopie slim, dane w page cache | dawna kampania 10 GB; nieużywana w pracy |
+
 | plik | co pokazuje | test |
 |---|---|---|
-| `01_speedup_amdahl.png` | przyspieszenie vs wątki, dopasowanie Amdahla i USL | T1 |
+| `01_speedup_amdahl.png` | przyspieszenie vs wątki, dopasowanie Amdahla | T1 |
 | `02_parallel_efficiency.png` | efektywność równoległa [%] | T1 |
 | `03_weak_scaling.png` | czas przy stałej pracy na wątek z dopasowaniem `w + c·N`, przyspieszenie skalowane; slim przerywaną | T2, T2S |
 | `04_rss_vs_threads.png` | koszt pamięciowy wątku | T3 |
@@ -561,6 +703,7 @@ pozwala podać mniejsze wejście.
 | `11_file_width.png` | czas pętli, przyspieszenie i RSS: pełny schemat vs slim | T6 |
 | `13_input_size.png` | szczyt RSS i czas całkowity (setup + JIT + pętla) względem rozmiaru wejścia w GB, RDF / uproot / Python | `size`, `sizepy` |
 | `14_optimum_vs_size.png` | optymalna liczba wątków względem liczby zdarzeń, z kilku katalogów wyników (`plot_optimum.py`): dopasowane $n^*=\sqrt{a/b}$ z $T(n)=c+a/n+b\,n$, najszybszy zmierzony punkt z plateau 5%, linia $\propto\sqrt{N}$ i liczba rdzeni maszyn | T1 |
+| `15_real_vs_synthetic.png` | łańcuch na ~1 TB: czas pętli, przyspieszenie i RSS, zbiór sztuczny, kontrola i Open Data (`plot_real_vs_synthetic.py`, obok `summary_real_vs_synthetic.csv`) | T1 |
 
 Przy `DATASET=big` nie ma biegów T5, więc wykres 08 powstaje z największego punktu serii
 rozmiarów (9 kopii, ~98 GB). Na konsolę trafiają też nachylenia z serii (GB RSS i sekundy na
@@ -570,16 +713,24 @@ Wąsy na wykresach 01–04 i 09–11 to min–max z powtórzeń, punkt to median
 
 Obok wykresów powstaje `table_scalability_<test>.tex` (`filter`, `chain`, `efficiency`), czyli
 tabela skalowalności z pracy (`tab:scalability`) liczona z T1: czas pętli przy `ImplicitMT(n)`,
-przepustowość, przyspieszenie i efektywność względem `ImplicitMT(1)` oraz dwie kolumny CPU.
-„CPU loop” to CPU samej pętli przez jej czas, czyli to samo okno co kolumna czasu. „CPU process”
-to CPU% całego procesu z GNU time, razem z jednowątkowym setupem i JIT. Na 1 TB przy 48 wątkach
-to 3138% wobec 1403%. Podpis sam podaje liczbę zdarzeń, wejście, liczbę powtórzeń, zimny odczyt i maksimum.
+czas całego procesu, przepustowość, przyspieszenie i efektywność względem `ImplicitMT(1)` oraz
+„cores busy”, czyli CPU samej pętli przez jej czas. Przepustowość, przyspieszenie i efektywność
+liczone są z czasu pętli. Czas całego procesu (z GNU time) obejmuje start Pythona i ROOT-a,
+otwarcie plików i JIT: na 1 TB pełnych plików to ~24 s stałego kosztu przy pętli 13 s, na zbiorze
+slim ~5 s przy 334 s. Podpis sam podaje liczbę zdarzeń, liczbę powtórzeń, zimny odczyt i maksimum.
+
+`summary_strong_<test>.csv` to podsumowanie tego samego dla każdej zmierzonej liczby wątków
+(nie tylko `TABLE_THREADS`): liczba biegów, mediana, minimum i maksimum czasu pętli, czas całego
+procesu, stały koszt (setup, rozgrzewka, JIT), przepustowość, przyspieszenie, efektywność
+i „cores busy”. Biegi pominięte przez regułę `OUTLIER_FACTOR` nie wchodzą do żadnej z tych
+liczb. Rekordy sprzed poprawki parsera GNU time gubiły godziny w `elapsed_s` (bieg 8,6 h
+zapisany jako 34 min); `plot_results.py` je odtwarza, bo proces trwa zawsze dłużej niż jego fazy,
+a różnica to sekundy.
 Powstaje też przy `--csv-only`.
 
-Na konsolę trafiają też: frakcja szeregowa $s$ z Amdahla, $\sigma$ i $\kappa$ z USL,
-przewidywane optimum liczby wątków i **zmierzony** udział setup + JIT przy jednym wątku. Jeśli
-dopasowane $s$ jest wyraźnie większe od zmierzonego, degradacja ma przyczynę poza kodem
-szeregowym i opisuje ją $\kappa$. Dalej: koszt na wątek z T2 i T2S (ms/wątek), najlepsze
+Na konsolę trafiają też: frakcja szeregowa $s$ z Amdahla i **zmierzony** udział setup + JIT
+przy jednym wątku. Jeśli dopasowane $s$ jest wyraźnie większe od zmierzonego, degradacja ma
+przyczynę poza kodem szeregowym (optimum liczby wątków liczy `plot_optimum.py`). Dalej: koszt na wątek z T2 i T2S (ms/wątek), najlepsze
 przyspieszenie względem wersji bez MT, RSS na wątek dla obu plików z T6 oraz sprawdzenie, że
 wszystkie biegi T1 i T6 danego testu dały ten sam wynik (checksumy). „per extra thread”
 podaje nachylenia RSS, odczytu i CPU pętli względem liczby wątków dla T1 i T6, a „T5 … against
@@ -600,10 +751,12 @@ T1 t0” różnicę między identycznymi biegami RDF z T5 i z T1.
 | `THREADS_LIST` | `1 2 4 8 12 16 24 32 48` | sweep wątków w T1 i T6 |
 | `THREAD_SCALE` | `linear` przy siatce do ≥96 wątków, inaczej `log` | skala osi wątków (i osi przyspieszenia) w `plot_results.py` |
 | `TABLE_THREADS` | `1 2 4 8 12 16 24 32 48 64 80 88 96 104 112 128 144 160 176 192` | wiersze tabel `table_scalability_*.tex` w `plot_results.py`; najszybszy punkt jest dokładany zawsze |
+| `OUTLIER_FACTOR` | `1.5` | `plot_results.py` i `plot_optimum.py` pomijają bieg, którego pętla trwa dłużej niż tyle razy mediana tej samej konfiguracji (co najmniej 3 biegi); `0` wyłącza |
 | `WEAK_SERIES` | `1 2 4 8 16 32` / `1 2 4 8 16 32 48` | N w T2 |
 | `WEAK_UNIT` | `2` | kopii na wątek w punkcie T2 (tylko `big`): `weak_N.txt` ma `WEAK_UNIT`·N kopii |
 | `CHAIN_LENS` | `1 3 5` | długości łańcucha w T4 |
-| `TESTS` | wszystkie / `strong weak qstruct size` dla `big` | które eksperymenty biegną |
+| `TESTS` | wszystkie / `strong weak qstruct size` dla `big` | które eksperymenty biegną; `strongchain` to sam T1 łańcucha 5 filtrów (bez t0) |
+| `CHAIN_ARGS` | — | dodatkowe argumenty `bench_chain.py` w `strongchain`, np. `--period 2016` |
 | `SIZE_SERIES` | `1 2 4 6 8 9` | liczby kopii w `size` i `sizepy` (tylko `big`) |
 | `BIG_COPIES` / `IMPL_COPIES` | `96` / `9` | ile kopii `ds_N.root` ma `lists/core.txt` / `lists/impl.txt` (tylko `big`) |
 | `RESUME` | — | `1` dopisuje do `raw.jsonl` i pomija biegi, które są już `ok` |

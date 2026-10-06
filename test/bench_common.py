@@ -70,10 +70,17 @@ CHAIN_COLUMNS = {
 }
 MAX_CHAIN_LEN = len(CHAIN_STEPS)
 EFFICIENCY_COLUMNS = ["PPSLocalTrack_x", "PPSLocalTrack_y", "PPSLocalTrack_decRPId"]
-ARM_LEFT_RPS = (23, 123)
-ARM_RIGHT_RPS = (3, 103)
-DIAMOND_RP_TYPE = 5
 XI_RANGE = (0.05, 0.1)
+# The detector-dependent parameters of the chain, per data-taking period. "2023" is the
+# notebook's analysis on the Tier0 replay (and the ds_xN copies of it): pots 23|123 and 3|103,
+# diamond timing detectors, RP 22. In 2016 PPS ran with strip detectors only, in pots 2, 3,
+# 102 and 103, so there the 2023 chain rejects every event at double_arm. The 2016 variant
+# keeps the same five steps over the same columns with that year's pots and detector type.
+PERIODS = {
+    "2023": {"arms": ((23, 123), (3, 103)), "detector": "diamond", "rp_type": 5, "rp_id": 22},
+    "2016": {"arms": ((2, 3), (102, 103)), "detector": "strip", "rp_type": 3, "rp_id": 3},
+}
+DEFAULT_PERIOD = "2023"
 
 WARMUP_INPUT = os.path.join(REPO_ROOT, "examples", "test.root")
 
@@ -101,7 +108,10 @@ def build_parser(description, impls, modes=("vector", "loop")):
     parser.add_argument("--mode", default=modes[0], choices=modes,
                         help="python implementation only: numpy over the columns, or plain loops")
     parser.add_argument("--threads", type=int, default=0, help="0 disables ImplicitMT")
-    parser.add_argument("--rp-id", type=int, default=DEFAULT_RP_ID)
+    parser.add_argument("--period", default=DEFAULT_PERIOD, choices=sorted(PERIODS),
+                        help="detector configuration the chain's cuts are written for")
+    parser.add_argument("--rp-id", type=int, default=None,
+                        help="default: the period's RP (22 for 2023, 3 for 2016)")
     parser.add_argument("--arm", default=DEFAULT_ARM)
     parser.add_argument("--pot-type", default=DEFAULT_POT, choices=["box", "cyl"])
     parser.add_argument("--tag", default="", help="free-form label copied into the output record")
@@ -181,6 +191,7 @@ def tree_layout(path, tree="Events"):
         "branches": [b.GetName() for b in t.GetListOfBranches()],
         "compression_algorithm": int(f.GetCompressionAlgorithm()),
         "compression_level": int(f.GetCompressionLevel()),
+        "size_bytes": int(f.GetSize()),
     }
     f.Close()
     return layout
@@ -291,6 +302,8 @@ class Bench:
     """Collects one measurement record. Use `with bench.phase("loop"):` around timed work."""
 
     def __init__(self, args, test_name):
+        if args.rp_id is None:
+            args.rp_id = PERIODS[args.period]["rp_id"]
         self.args = args
         self._trace = start_rss_trace(float(os.environ.get("SAMPLE_INTERVAL", 0.1)))
         self.record = {
@@ -299,6 +312,7 @@ class Bench:
             "impl": args.impl,
             "mode": args.mode,
             "threads": args.threads,
+            "period": args.period,
             "rp_id": args.rp_id,
             "arm": args.arm,
             "pot_type": args.pot_type,

@@ -8,9 +8,9 @@ shifted up by --shift: with --shift 1, its r1..r3 become r2..r4 and --base keeps
 traces are renamed the same way. Warm-ups of --add are dropped; they are never plotted and
 --base already has its own.
 
-    merge_results.py --base results/helios/run1/results-helios-big \
-        --add results/helios/run2/results-helios-big --shift 1 \
-        --out results/helios/results-helios-big-merged
+    merge_results.py --base results/helios/full-1tb-job1 \
+        --add results/helios/full-1tb-job2 --shift 1 \
+        --out results/helios/full-1tb
 
 Neither input is modified. --out must not exist yet.
 """

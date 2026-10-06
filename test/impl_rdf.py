@@ -22,11 +22,13 @@ from app.analyze_proton_events import (
 from app.apply_corrections import apply_diamond_efficiency_jit
 
 
-def chain_filters(rp_id=bc.DEFAULT_RP_ID):
+def chain_filters(rp_id=bc.DEFAULT_RP_ID, period=bc.DEFAULT_PERIOD):
+    left, right = bc.PERIODS[period]["arms"]
+    detector = bc.PERIODS[period]["detector"]
     return {
         "pps": lambda df: df.Filter("nPPSLocalTrack > 0", "Events with PPS data"),
-        "double_arm": filter_double_arm_events,
-        "diamond": lambda df: filter_detector_type(df, "diamond"),
+        "double_arm": lambda df: filter_double_arm_events(df, left, right),
+        "diamond": lambda df: filter_detector_type(df, detector),
         "rp_id": lambda df: filter_detector_specific_events(df, rp_id),
         "xi": lambda df: filter_xi_ranged_events(df, *bc.XI_RANGE),
         "multi_rp_idx": lambda df: df.Filter(
@@ -60,14 +62,15 @@ def trigger_filter(handle):
 
 # --- TEST 2: filter chain --------------------------------------------------------------------
 
-def build_chain_nodes(df, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base"):
+def build_chain_nodes(df, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base",
+                      period=bc.DEFAULT_PERIOD):
     """
     Every node of the chain, including the unfiltered root: `nodes[i]` has `i` filters applied.
 
     Returned in full rather than just the tail because the report path needs the root for its
     total, and building the nodes is exactly the cost we want outside the loop phase.
     """
-    filters = chain_filters(rp_id)
+    filters = chain_filters(rp_id, period)
     nodes = [df]
     for name in bc.chain_steps(chain_len, chain):
         nodes.append(filters[name](nodes[-1]))
@@ -87,7 +90,7 @@ def trigger_chain_lazy(handles):
     }
 
 
-def trigger_chain_eager(root, chain_len, rp_id, chain="base"):
+def trigger_chain_eager(root, chain_len, rp_id, chain="base", period=bc.DEFAULT_PERIOD):
     """
     Reproduces rdata_analysis(): the total event count, then one after every filter.
 
@@ -97,7 +100,7 @@ def trigger_chain_eager(root, chain_len, rp_id, chain="base"):
     otherwise satisfy every booked action in one pass, which is the behaviour this path is
     supposed to lack.
     """
-    filters = chain_filters(rp_id)
+    filters = chain_filters(rp_id, period)
     counts = [int(root.Count().GetValue())]
     current = root
     for name in bc.chain_steps(chain_len, chain):

@@ -4,7 +4,7 @@ Turns results/raw.jsonl into a flat CSV and the plots of the benchmark campaign.
 
 Repeats are aggregated, never overwritten: every curve goes through a median, and the spread
 across repeats is kept for the error bars. Runs that failed or hit the timeout stay in the CSV
-with status "failed".
+with status "failed", and runs disturbed by the machine (see flag_disturbed) with "disturbed".
 
 Needs only matplotlib, not ROOT, so it runs on a laptop over a results directory copied off the
 cluster.
@@ -65,6 +65,41 @@ def dedupe_labels(records):
     superseded = [r for i, r in enumerate(records) if last_index[r.get("label")] != i
                   and not str(r.get("label", "")).startswith("warmup_")]
     return keep, len(superseded)
+
+
+# A run whose event loop takes more than this many times the median of its configuration is
+# left out of every median, range and fit. OUTLIER_FACTOR=0 keeps all runs.
+OUTLIER_FACTOR = float(os.environ.get("OUTLIER_FACTOR", "1.5"))
+
+
+def flag_disturbed(records, factor=OUTLIER_FACTOR):
+    """
+    Marks runs slowed down by the machine rather than by the code, as status "disturbed".
+
+    On the shared Lustre of Helios a run occasionally takes two to three times as long as its
+    repeats while reading the same bytes, its threads spinning on data that does not arrive.
+    The rule is fixed in advance and applies to every campaign alike: a configuration (the
+    label without its r<N>_ prefix) needs at least three ok runs, since with two there is no
+    telling which one is off, and a run is disturbed when its loop time exceeds `factor` times
+    the configuration's median. Slower runs within that bound are ordinary spread and stay.
+    """
+    if factor <= 0:
+        return []
+    groups = defaultdict(list)
+    for record in records:
+        match = re.match(r"r\d+_(.+)", str(record.get("label", "")))
+        if match and record.get("status") == "ok" and record.get("wall_loop") is not None:
+            groups[match.group(1)].append(record)
+    flagged = []
+    for runs in groups.values():
+        if len(runs) < 3:
+            continue
+        typical = median([r["wall_loop"] for r in runs])
+        for r in runs:
+            if r["wall_loop"] > factor * typical:
+                r["status"] = "disturbed"
+                flagged.append((r["label"], r["wall_loop"], typical))
+    return sorted(flagged)
 
 
 def write_csv(records, results_dir):
@@ -131,6 +166,25 @@ def plot_rows(ax, rows, field, label, **kwargs):
     plot_series(ax, points, label, lw=2, **kwargs)
 
 
+def total_seconds(record):
+    """
+    Wall time of the whole process, start-up to exit, from GNU time.
+
+    Records written before the parser fix lost the hours of GNU time's h:mm:ss, so a run over an
+    hour reads as its minutes and seconds only. The process outlives its own measured phases
+    (setup, warm-up, JIT, loop) by the interpreter start and the teardown, seconds rather than
+    an hour, so the missing hours are the smallest number that brings it back above them.
+    Without GNU time, falls back to the sum of the phases.
+    """
+    phases = (record.get("wall_fixed") or 0.0) + (record.get("wall_loop") or 0.0)
+    elapsed = record.get("elapsed_s")
+    if elapsed is None:
+        return phases or None
+    while elapsed < phases:
+        elapsed += 3600
+    return elapsed
+
+
 def cores_busy(record):
     """
     Average number of cores the event loop kept busy.
@@ -141,7 +195,7 @@ def cores_busy(record):
     """
     if record.get("cores_busy_loop") is not None:
         return record["cores_busy_loop"]
-    cpu, elapsed, loop = record.get("cpu_percent"), record.get("elapsed_s"), record.get("wall_loop")
+    cpu, elapsed, loop = record.get("cpu_percent"), total_seconds(record), record.get("wall_loop")
     if not (cpu and elapsed and loop):
         return None
     return (cpu / 100 * elapsed - (elapsed - loop)) / loop
@@ -208,7 +262,7 @@ def check_impls_agree(records):
 CORE_TEST_LABEL = {
     "filter": "single filter",
     "chain": "5-filter chain",
-    "chain11": "11-filter chain",
+    "chain11": "10-branch chain",
     "efficiency": "efficiency column",
 }
 CORE_TEST_COLOUR = {"filter": "#4575b4", "chain": "#1b7837", "chain11": "#762a83",
@@ -245,7 +299,7 @@ def measured_serial_fraction(records):
 
     Setup and cling JIT do not parallelise, so they are the serial region the fitted s should
     correspond to. Two numbers that disagree mean the degradation has a cause outside the
-    code's own serial part, which is exactly what USL's coherency term is for.
+    code's own serial part.
     """
     threaded = [r for r in records if r.get("threads") and r.get("wall_loop") is not None]
     if not threaded:
@@ -378,9 +432,8 @@ def plot_core(ok, results_dir, plt, save, outputs):
         ax.set_ylabel(r"speedup $S(n) = T(1)\,/\,T(n)$")
 
     # (1) Strong scaling: the same events, more threads. Amdahl applies here and only
-    # here. It is drawn not because it fits but because it cannot -- monotonic in n for any
-    # serial fraction, it has no way to express a curve that turns back down. USL adds the
-    # coherency term that does, and its maximum is the number of practical interest.
+    # here. Monotonic in n for any serial fraction, it has no way to express a curve that turns
+    # back down; where it misses the measured points, the loss grows with the thread count.
     rows = {test: scalability_rows(strong, test) for test in CORE_TEST_LABEL}
     if any(rows.values()):
         fig, ax = plt.subplots(figsize=(8.5, 5.2))
@@ -389,7 +442,7 @@ def plot_core(ok, results_dir, plt, save, outputs):
                 plot_rows(ax, rows[test], "speedup", pretty, color=CORE_TEST_COLOUR[test])
         ax.plot(ticks, ticks, ls="-", lw=1, color="#bbbbbb", label="ideal ($S = n$)")
 
-        # The models are fitted to one curve: the 5-filter chain, or the 11-filter one in a
+        # The models are fitted to one curve: the 5-filter chain, or the 10-branch one in a
         # campaign that ran only that.
         fit_test = "chain" if rows["chain"] else "chain11"
         if rows[fit_test]:
@@ -397,29 +450,16 @@ def plot_core(ok, results_dir, plt, save, outputs):
             grid = [t for t in range(1, max(ticks) + 1)]
             lowest = min(n for n, _ in measured)
         if rows[fit_test] and lowest > 1:
-            # Both models are anchored at S(1) = 1. A sweep that starts at 64 threads (run2,
-            # the refinement of the plateau) normalises to S(64) = 1 instead, and the fit then
-            # describes the wrong curve -- sigma pinned to the end of its range. Merge such a
-            # sweep with the one holding the low-thread points before fitting.
-            print(f"  no 1-thread point (lowest is {lowest}): skipping the Amdahl and USL fits")
+            # The model is anchored at S(1) = 1. A sweep that starts at 64 threads (run2, the
+            # refinement of the plateau) normalises to S(64) = 1 instead, and the fit then
+            # describes the wrong curve. Merge such a sweep with the one holding the low-thread
+            # points before fitting.
+            print(f"  no 1-thread point (lowest is {lowest}): skipping the Amdahl fit")
         elif rows[fit_test]:
             fitted_s = fit_amdahl(measured)
-            sigma, kappa = fit_usl(measured)
-            # kappa falls below 1e-4 once the sweep reaches hundreds of threads; a fixed 4-digit
-            # format prints it as 0.0000, which reads as "no coherency term" -- the opposite of
-            # what the fit found.
-            kappa_label = f"{kappa:.4f}" if kappa >= 1e-3 else f"{kappa:.1e}"
             ax.plot(grid, [1 / (fitted_s + (1 - fitted_s) / n) for n in grid], ls="--", lw=1.6,
                     color="#888888", label=f"Amdahl, $s$={fitted_s:.3f}")
-            ax.plot(grid, [n / (1 + sigma * (n - 1) + kappa * n * (n - 1)) for n in grid],
-                    ls=":", lw=1.8, color="#333333",
-                    label=fr"USL, $\sigma$={sigma:.3f}, $\kappa$={kappa_label}")
             print(f"  Amdahl serial fraction s = {fitted_s:.4f} (ceiling {1 / fitted_s:.2f}x)")
-            print(f"  USL sigma = {sigma:.4f}, kappa = {kappa:.6f}")
-            if kappa > 0:
-                peak = ((1 - sigma) / kappa) ** 0.5
-                ax.axvline(peak, color="#333333", ls=":", lw=1, alpha=0.5)
-                print(f"  USL predicted optimum = {peak:.1f} threads")
 
             observed = measured_serial_fraction(strong)
             if observed is not None:
@@ -909,9 +949,8 @@ def fit_amdahl(points):
     """
     Serial fraction s minimising relative error of S(n) = 1 / (s + (1 - s) / n).
 
-    Refined the same way as fit_usl: the quoted ceiling is 1/s, so a step that is harmless for
-    s = 0.26 moves the ceiling by several speedup units once s falls to ~0.009 on the 1 TB
-    sweeps.
+    Coarse-to-fine: the quoted ceiling is 1/s, so a step that is harmless for s = 0.26 moves
+    the ceiling by several speedup units once s falls to ~0.009 on the 1 TB sweeps.
     """
     def error_of(s):
         return sum((1 / (s + (1 - s) / n) / measured - 1) ** 2 for n, measured in points)
@@ -926,53 +965,6 @@ def fit_amdahl(points):
                                          for i in range(101)])
         s = best[1]
     return s
-
-
-def fit_usl(points):
-    """
-    Contention and coherency of S(n) = n / (1 + sigma(n-1) + kappa*n(n-1)).
-
-    Amdahl's law is this with kappa = 0, and it cannot bend back down: it is monotonic in n for
-    any serial fraction. The measured curves do bend down, so what the fit establishes is not
-    goodness of match but that kappa is distinguishable from zero.
-
-    Coarse-to-fine rather than one fixed grid: kappa scales like 1/n^2, so the value that fits
-    a 192-thread sweep over 1 TB (~2.5e-5) is smaller than a single step of a grid coarse
-    enough for the 48-thread ones (5e-5). On a fixed grid it snaps to kappa = 0, and the fit
-    silently degenerates into Amdahl's law -- no knee, N* = infinity, and a curve that misses
-    the measured plateau.
-
-    The first pass keeps the original grid. Starting coarser and refining is what an optimiser
-    would do, but the error surface has local minima along sigma, and a sparser first pass
-    picks the wrong basin on the mid-sized sweeps.
-    """
-    def error_of(sigma, kappa):
-        return sum((n / (1 + sigma * (n - 1) + kappa * n * (n - 1)) / measured - 1) ** 2
-                   for n, measured in points)
-
-    sigma_step, kappa_step = 1 / 1000, 1 / 20000
-    best = (float("inf"), 0.0, 0.0)
-    for i in range(400):
-        for j in range(400):
-            trial = (i * sigma_step, j * kappa_step)
-            error = error_of(*trial)
-            if error < best[0]:
-                best = (error, *trial)
-    _, sigma, kappa = best
-
-    # Refine inside the winning cell, which brackets the true optimum by construction.
-    for _ in range(3):
-        sigma_lo, kappa_lo = max(0.0, sigma - sigma_step), max(0.0, kappa - kappa_step)
-        sigma_step, kappa_step = sigma_step / 50, kappa_step / 50
-        best = (error_of(sigma, kappa), sigma, kappa)
-        for i in range(101):
-            for j in range(101):
-                trial = (sigma_lo + i * sigma_step, kappa_lo + j * kappa_step)
-                error = error_of(*trial)
-                if error < best[0]:
-                    best = (error, *trial)
-        _, sigma, kappa = best
-    return sigma, kappa
 
 
 def per_thread_cost(records, test):
@@ -1033,9 +1025,15 @@ def scalability_rows(records, test, baseline=None):
     for threads in sorted(runs):
         loops = [x["wall_loop"] for x in runs[threads]]
         seconds = median(loops)
+        totals = [t for t in (total_seconds(x) for x in runs[threads]) if t is not None]
         rows.append({
             "threads": threads,
+            "runs": len(loops),
             "seconds": seconds,
+            "seconds_lo": min(loops),
+            "seconds_hi": max(loops),
+            "total": median(totals) if totals else None,
+            "fixed": median([x.get("wall_fixed") or 0.0 for x in runs[threads]]),
             "speedup": baseline / seconds,
             "speedup_lo": baseline / max(loops),
             "speedup_hi": baseline / min(loops),
@@ -1058,9 +1056,11 @@ def scalability_table(records, test):
     """
     The thesis's scalability table (tab:scalability) for one benchmark of the strong sweep.
 
-    Same definitions as the hand-written original, so a new campaign drops in unchanged: time is
+    Same definitions as the hand-written original, so a new campaign drops in unchanged: loop is
     the event-loop wall time under ImplicitMT(n), speedup and efficiency are against
-    ImplicitMT(1), and throughput is events over that loop time. Cores busy is the event loop's
+    ImplicitMT(1), and throughput is events over that loop time. Total is the whole process
+    (total_seconds), what a user waits for, so the fixed cost of opening the files and compiling
+    the kernels stays visible next to the part that parallelises. Cores busy is the event loop's
     own CPU time over its wall time, the same window as the time column, so it is directly
     comparable to the thread count. The whole-process CPU figure is deliberately not shown: it
     also counts the single-threaded setup and JIT, so on 1 TB it reads ~48 s against a ~43 s
@@ -1099,6 +1099,7 @@ def scalability_table(records, test):
         body.append(" & ".join([
             f"{threads:>2}",
             bold(row, f"{seconds:.2f}"),
+            f"{row['total']:.1f}" if row["total"] is not None else "--",
             bold(row, f"{throughput:.2f}") if throughput is not None else "--",
             bold(row, f"{row['speedup']:.2f}"),
             f"{row['efficiency'] * 100:.0f}\\%",
@@ -1131,8 +1132,11 @@ def scalability_table(records, test):
         f"Parallel scalability metrics for the {CORE_TEST_LABEL[test].replace('5-', 'five-')} "
         f"on {events}, {where} "
         f"({median_note}{cache_note}speedup against \\texttt{{ImplicitMT}} with one thread). "
+        f"Loop is the event loop's wall time, from which throughput, speedup and efficiency are "
+        f"computed; total is the whole process, including start-up, opening the files and "
+        f"compiling the analysis. "
         f"Cores busy is the event loop's CPU time over its wall time, measured in the same "
-        f"window as the time column, so it is directly comparable to the thread count. "
+        f"window as the loop column, so it is directly comparable to the thread count. "
         f"The speedup maximum at "
         f"{best['threads']} threads coincides with a parallel efficiency of only "
         f"${best['efficiency'] * 100:.0f}\\%$.{read_note}"
@@ -1142,9 +1146,11 @@ def scalability_table(records, test):
         r"\centering",
         rf"\caption{{{caption}}}",
         rf"\label{{tab:scalability-{test}}}",
-        r"\begin{tabular}{rrrrrr}",
+        r"\setlength{\tabcolsep}{5pt}",
+        r"\begin{tabular}{rrrrrrr}",
         r"\toprule",
-        r"Threads & Time [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ & Cores busy \\",
+        r"Threads & Loop [s] & Total [s] & Throughput [$10^6$ ev/s] & Speedup $S$ & Efficiency $E$ "
+        r"& Cores busy \\",
         r"\midrule",
         *body,
         r"\bottomrule",
@@ -1154,8 +1160,49 @@ def scalability_table(records, test):
     ])
 
 
+SUMMARY_FIELDS = ["threads", "runs", "loop_s", "loop_min_s", "loop_max_s", "total_s", "fixed_s",
+                  "throughput_mev_s", "speedup", "efficiency", "cores_busy"]
+
+
+def strong_summary(records, test):
+    """
+    One row per thread count of the strong sweep, every count rather than TABLE_THREADS.
+
+    Loop times are the median over the runs left after flag_disturbed, with their range; total
+    is the whole process (total_seconds) and fixed the per-process setup, warm-up and JIT.
+    """
+    rows = scalability_rows(records, test)
+    ok = [r for r in records if r.get("status") == "ok" and r.get("test") == test]
+    n_events = median([r["n_events"] for r in ok if r.get("n_events")])
+    busy = defaultdict(list)
+    for r in ok:
+        value = cores_busy(r)
+        if value is not None and r.get("threads"):
+            busy[r["threads"]].append(value)
+    out = []
+    for row in rows:
+        threads = row["threads"]
+        out.append({
+            "threads": threads,
+            "runs": row["runs"],
+            "loop_s": f"{row['seconds']:.2f}",
+            "loop_min_s": f"{row['seconds_lo']:.2f}",
+            "loop_max_s": f"{row['seconds_hi']:.2f}",
+            "total_s": f"{row['total']:.1f}" if row["total"] is not None else "",
+            "fixed_s": f"{row['fixed']:.1f}",
+            "throughput_mev_s": f"{n_events / row['seconds'] / 1e6:.2f}" if n_events else "",
+            "speedup": f"{row['speedup']:.2f}",
+            "efficiency": f"{row['efficiency']:.3f}",
+            "cores_busy": f"{median(busy[threads]):.1f}" if busy.get(threads) else "",
+        })
+    return out
+
+
 def write_scalability_tables(records, results_dir):
-    """table_scalability_<test>.tex for every benchmark of the strong sweep that has records."""
+    """
+    table_scalability_<test>.tex and summary_strong_<test>.csv for every benchmark of the
+    strong sweep that has records.
+    """
     strong = core_rows(records, "strong")
     paths = []
     for test in CORE_TEST_LABEL:
@@ -1165,6 +1212,12 @@ def write_scalability_tables(records, results_dir):
         path = os.path.join(results_dir, f"table_scalability_{test}.tex")
         with open(path, "w") as f:
             f.write(table)
+        paths.append(path)
+        path = os.path.join(results_dir, f"summary_strong_{test}.csv")
+        with open(path, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=SUMMARY_FIELDS)
+            writer.writeheader()
+            writer.writerows(strong_summary(strong, test))
         paths.append(path)
     return paths
 
@@ -1185,8 +1238,13 @@ def main():
         print(f"WARNING: ignoring {superseded} superseded records (duplicate labels from a "
               f"restarted job; the earlier attempts ran on a cold page cache)")
 
+    disturbed = flag_disturbed(records)
+    for label, loop, typical in disturbed:
+        print(f"DISTURBED: {label} left out, loop {loop:.1f} s against a median of {typical:.1f} s "
+              f"(> {OUTLIER_FACTOR:g}x)")
+
     print(f"{len(records)} records -> {write_csv(records, args.results)}")
-    failed = [r for r in records if r.get("status") != "ok"]
+    failed = [r for r in records if r.get("status") not in ("ok", "disturbed")]
     if failed:
         print(f"NOTE: {len(failed)} runs failed or timed out: "
               f"{', '.join(sorted(r['label'] for r in failed)[:10])}")
