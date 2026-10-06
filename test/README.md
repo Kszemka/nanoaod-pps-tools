@@ -21,6 +21,10 @@ Jedna ścieżka: `slurm_benchmark.sbatch` → `run_all.sh` → `validate.py` + `
 | `slurm_make_bigset.sbatch` | `make_bigset.sh` jako osobne zadanie, równolegle z pobieraniem |
 | `slurm_real_vs_synthetic.sbatch` | zadanie 2: łańcuch `--period 2016` na Open Data i punkty kontrolne na `ds_1`–`ds_96` |
 | `plot_real_vs_synthetic.py` | porównanie: zbiór sztuczny, kontrola i Open Data na jednym rysunku i w tabeli |
+| `slurm_realsyn_followup.sbatch` | zadanie 3: powtórzenia Open Data, seria rozmiarów na Open Data, test pamięci |
+| `make_head.py` | początek pliku (pełne klastry), te same gałęzie i kodek: mniej koszyków na plik |
+| `dataset_json.py` | `dataset.json` w katalogu wyników: pliki, zdarzenia, gałęzie, klastry i koszyki na plik, kodek |
+| `plot_memory_layout.py` | pamięć na wątek względem układu pliku (gałęzie, koszyki), dopasowanie modelu |
 | `bench_filter.py`, `bench_chain.py`, `bench_efficiency.py` | pojedynczy pomiar (TEST 1–3) |
 | `bench_common.py` | parser argumentów, fazy czasu, liczniki bajtów i RSS, rekord `BENCH` |
 | `impl_rdf.py`, `impl_python.py`, `impl_uproot.py` | implementacje mierzonych operacji |
@@ -203,13 +207,65 @@ Jeśli węzły obliczeniowe nie mają sieci (zadanie 1 kończy się w kroku 0), 
 działa jako zwykły skrypt na węźle logowania, w `tmux`:
 `bash test/slurm_fetch_opendata.sbatch`, a potem `bash test/opendata_helios.sh --bench-only`.
 
-Po zadaniu 2 skopiuj oba katalogi do `results/helios/opendata-1tb` i `results/helios/control-1tb`:
+Po zadaniu 2 skopiuj oba katalogi (`results-helios-opendata-1tb`, `results-helios-control-1tb`)
+do `results/real-1/`:
 
 ```bash
 python test/plot_real_vs_synthetic.py --synthetic results/helios/full-1tb \
-    --control results/helios/control-1tb --real results/helios/opendata-1tb \
-    --out results/helios/opendata-1tb
+    --control results/real-1/results-helios-control-1tb \
+    --real results/real-1/results-helios-opendata-1tb \
+    --out results/real-1/results-helios-opendata-1tb
 ```
+
+### Uzupełnienie: powtórzenia, rozmiary, pamięć
+
+Zadanie 3 (`slurm_realsyn_followup.sbatch`, cały węzeł, do 4 h, ~2,5 h) działa na danych z
+zadania 2, niczego nie pobiera. Fazy idą po kolei, `PHASES` wybiera podzbiór:
+
+- **repeats**: r2 i r3 łańcucha na całym Open Data (zimny odczyt, 13 punktów 1–192),
+  dopisane do `results-helios-opendata-1tb` z `RESUME=1`: biegi r1 są pomijane, krzywa dostaje
+  takie same wąsy min–max jak zbiór sztuczny. `dataset.json` jest tam liczony od nowa, już z
+  koszykami na plik.
+- **sizes**: ta sama seria wątków, 3 powtórzenia, na `weak_4.txt` (~87 mln zdarzeń) i
+  `weak_16.txt` (~350 mln) → `results-helios-opendata-weak4`, `-weak16`. To odpowiedniki
+  `full-100m` i `full-355m` na `14_optimum_vs_size.png`.
+- **memory**: `make_head.py` wycina z `ds_x32.root` pierwszą 1/32 (te same 1984 gałęzie i
+  ZSTD:5, 1/32 klastrów, więc ~1/32 koszyków na plik) do `$SCRATCH/bench/memtest`; łańcuch czyta
+  listę z 384 powtórzeniami tego pliku, z page cache, na 1, 8, 32, 96, 192 wątkach →
+  `results-helios-memtest`. Obok `layout-ds_x32/` i `layout-slim11/` (jeśli `slim11` jest
+  jeszcze na scratchu) z układem tych plików. Jeśli koszt wątku zależy od liczby koszyków, a nie
+  od samych gałęzi, spadnie tu daleko poniżej ~200 MB z `full-11m`.
+
+```bash
+sbatch test/slurm_realsyn_followup.sbatch
+sbatch --export=ALL,PHASES="memory" test/slurm_realsyn_followup.sbatch   # sama faza
+```
+
+Każdy katalog wyników dostaje `dataset.json` (`dataset_json.py`): liczbę plików, zdarzenia,
+zakres gałęzi, a z próbki do 5 plików medianę gałęzi, klastrów i koszyków na plik oraz kodek.
+Po skopiowaniu katalogów do `results/real-1/`:
+
+```bash
+python test/plot_real_vs_synthetic.py --synthetic results/helios/full-1tb \
+    --control results/real-1/results-helios-control-1tb \
+    --real results/real-1/results-helios-opendata-1tb --out results/real-1/results-helios-opendata-1tb
+python test/plot_optimum.py --tests chain --out results/real-1 \
+    --results results/helios/full-{11m,100m,355m,1tb} \
+    results/real-1/results-helios-opendata-{weak4,weak16,1tb}
+python test/plot_memory_layout.py --out results/real-1 \
+    --set "results/helios/slim-1.5tb:chain11:slim:results/real-1/results-helios-memtest/layout-slim11" \
+    --set "results/helios/full-11m:chain:ds_x32:results/real-1/results-helios-memtest/layout-ds_x32" \
+    --set "results/real-1/results-helios-memtest:chain:ds_x32 head" \
+    --set "results/real-1/results-helios-opendata-1tb:chain:Open Data"
+```
+
+`plot_optimum.py` rysuje przemiatania z `--period 2016` jako osobną serię (trójkąty).
+`plot_memory_layout.py` dopasowuje do nachylenia RSS względem wątków model
+`MB/wątek = a + b·gałęzie + c·koszyki na plik` i wypisuje resztę dla każdego wejścia: każdy
+TTree otwarty przez wątek trzyma indeks koszyków (rozmiar, pierwsze zdarzenie, pozycja w pliku)
+każdej gałęzi, czytanej czy nie. Układ wejścia bierze z `dataset.json` w katalogu wyników albo z
+czwartego pola `--set` (katalog z `dataset.json` albo ręcznie `GAŁĘZIE/KOSZYKI`, np. dla
+`dataset.json` sprzed liczenia koszyków: Open Data `1347/263884`, mediana z pliku DoubleMuon).
 
 Ręcznie te same kroki wyglądają tak:
 
@@ -679,8 +735,11 @@ archiwum):
 | `helios/full-1tb` | Helios | 96 kopii `ds_x32`, 1,07 mld zdarzeń, 1,04 TB | T1 do 192, T2 do 96; połączone `full-1tb-job1` i `full-1tb-job2` |
 | `helios/full-1tb-job1` | Helios | jak wyżej | pierwsze zadanie: T1 1–192, T2 1–96 |
 | `helios/full-1tb-job2` | Helios | jak wyżej | drugie zadanie: T1 64–192, 3 powtórzenia |
-| `helios/opendata-1tb` | Helios | Run 2 Open Data (Run2016H, potem G), ~1 TB, LZMA:9 | łańcuch `--period 2016`: T1 1–192; `15_real_vs_synthetic.png` |
-| `helios/control-1tb` | Helios | jak `full-1tb`, w tym samym zadaniu co `opendata-1tb` | łańcuch: T1 na 1, 48, 144, 192 |
+| `real-1/results-helios-opendata-1tb` | Helios | Run 2 Open Data (Run2016H, potem G), 653 pliki, 1,05 mld zdarzeń, ~1 TB, LZMA:9 | łańcuch `--period 2016`: T1 1–192 (r1; r2 i r3 z zadania 3); `15_real_vs_synthetic.png` |
+| `real-1/results-helios-control-1tb` | Helios | jak `full-1tb`, w tym samym zadaniu co `opendata-1tb` | łańcuch: T1 na 1, 48, 144, 192 |
+| `real-1/results-helios-opendata-weak4` | Helios | Open Data, `weak_4.txt`, ~87 mln zdarzeń | łańcuch `--period 2016`: T1 1–192, 3 powtórzenia (zadanie 3) |
+| `real-1/results-helios-opendata-weak16` | Helios | Open Data, `weak_16.txt`, ~350 mln zdarzeń | jak wyżej |
+| `real-1/results-helios-memtest` | Helios | 384 × `ds_x32_head.root` (1/32 `ds_x32`, 1984 gałęzie), z page cache | łańcuch: T1 na 1, 8, 32, 96, 192; `layout-*/dataset.json` (zadanie 3) |
 | `helios/full-11m` | Helios | `ds_x32`, 11,1 mln zdarzeń | T1 do 192, 3 powtórzenia |
 | `helios/full-100m` | Helios | 9 kopii, 99,9 mln zdarzeń | T1 do 192, 2 powtórzenia |
 | `helios/full-355m` | Helios | 32 kopie, 355 mln zdarzeń | T1 do 192 |
@@ -702,8 +761,9 @@ archiwum):
 | `10_cores_busy.png` | ile rdzeni pracowało w pętli, pełny plik i slim | T1, T6 |
 | `11_file_width.png` | czas pętli, przyspieszenie i RSS: pełny schemat vs slim | T6 |
 | `13_input_size.png` | szczyt RSS i czas całkowity (setup + JIT + pętla) względem rozmiaru wejścia w GB, RDF / uproot / Python | `size`, `sizepy` |
-| `14_optimum_vs_size.png` | optymalna liczba wątków względem liczby zdarzeń, z kilku katalogów wyników (`plot_optimum.py`): dopasowane $n^*=\sqrt{a/b}$ z $T(n)=c+a/n+b\,n$, najszybszy zmierzony punkt z plateau 5%, linia $\propto\sqrt{N}$ i liczba rdzeni maszyn | T1 |
+| `14_optimum_vs_size.png` | optymalna liczba wątków względem liczby zdarzeń, z kilku katalogów wyników (`plot_optimum.py`): dopasowane $n^*=\sqrt{a/b}$ z $T(n)=c+a/n+b\,n$, najszybszy zmierzony punkt z plateau 5%, linia $\propto\sqrt{N}$ i liczba rdzeni maszyn; Open Data (`--period 2016`) jako osobna seria trójkątów | T1 |
 | `15_real_vs_synthetic.png` | łańcuch na ~1 TB: czas pętli, przyspieszenie i RSS, zbiór sztuczny, kontrola i Open Data (`plot_real_vs_synthetic.py`, obok `summary_real_vs_synthetic.csv`) | T1 |
+| `16_memory_layout.png` | szczyt RSS względem wątków dla kilku układów pliku i nachylenie (MB/wątek) względem koszyków na plik, z modelem $a + b\cdot\text{gałęzie} + c\cdot\text{koszyki}$ (`plot_memory_layout.py`, obok `summary_memory_layout.csv`) | T1 |
 
 Przy `DATASET=big` nie ma biegów T5, więc wykres 08 powstaje z największego punktu serii
 rozmiarów (9 kopii, ~98 GB). Na konsolę trafiają też nachylenia z serii (GB RSS i sekundy na

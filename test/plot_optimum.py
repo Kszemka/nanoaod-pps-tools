@@ -13,7 +13,9 @@ scheduling), which does not. The minimum is at n* = sqrt(a/b): the optimum grows
 root of the work.
 
 Writes 14_optimum_vs_size.png (fitted n* and the measured best thread count against events,
-with a sqrt(N) guide and each machine's core count) and prints the fit for the text.
+with a sqrt(N) guide and each machine's core count) and prints the fit for the text. Sweeps
+on the Open Data files (chain with --period 2016) are drawn as their own series, with a
+triangle.
 
 Near the optimum T(n) is flat, so the fastest point alone is decided by noise. The plateau is
 the range of thread counts whose median loop time is within 5% of the minimum -- about the
@@ -34,6 +36,8 @@ from plot_results import CORE_TEST_COLOUR, CORE_TEST_LABEL, core_rows, dedupe_la
     flag_disturbed, load_records, median
 
 MACHINE_MARKER = {"ares": "o", "helios": "s"}
+OPENDATA_MARKER = "^"
+OPENDATA_PERIOD = "2016"
 PLATEAU = 1.05
 
 
@@ -107,9 +111,15 @@ def campaign(results_dir):
         best_n, best_t = min(points, key=lambda p: p[1])
         flat = [n for n, t in points if t <= PLATEAU * best_t]
         machines = sorted({r.get("machine") for r in runs if r.get("machine")})
+        machine = machines[0] if len(machines) == 1 else "/".join(machines)
+        # Real Run 2 files differ from the synthetic copies in pass rate, branch count and
+        # codec, so they get a series of their own rather than a point on the synthetic line.
+        opendata = all(r.get("period") == OPENDATA_PERIOD for r in runs)
         entries.append({
             "dir": os.path.basename(os.path.normpath(results_dir)),
-            "machine": machines[0] if len(machines) == 1 else "/".join(machines),
+            "machine": machine,
+            "series": f"{machine}, Open Data" if opendata else machine,
+            "opendata": opendata,
             "cores": max((r.get("cpus_allowed") or 0) for r in runs) or points[-1][0],
             "input": sorted({r.get("input") for r in runs if r.get("input")}),
             "events": median([r["n_events"] for r in runs if r.get("n_events")]),
@@ -124,7 +134,7 @@ def campaign(results_dir):
 
 
 def print_table(entries):
-    print(f"{'campaign':26s} {'machine':7s} {'events':>9s} {'test':10s} {'a [s]':>8s} "
+    print(f"{'campaign':30s} {'machine':7s} {'data':5s} {'events':>9s} {'test':10s} {'a [s]':>8s} "
           f"{'b [ms]':>7s} {'n*':>11s} {'best':>5s} {'plateau':>8s} {'max':>4s}")
     for e in entries:
         if e["n_star"] is None:
@@ -135,7 +145,8 @@ def print_table(entries):
             n_star = f"{e['n_star']:.0f}"
         best = f"{e['best_n']}" + ("+" if e["best_n"] == e["max_n"] else "")
         plateau = "{}-{}".format(*e["plateau"])
-        print(f"{e['dir']:26s} {e['machine']:7s} {e['events'] / 1e6:8.1f}M {e['test']:10s} "
+        data = "open" if e["opendata"] else "synth"
+        print(f"{e['dir']:30s} {e['machine']:7s} {data:5s} {e['events'] / 1e6:8.1f}M {e['test']:10s} "
               f"{e['a']:8.1f} {e['b'] * 1000:7.1f} {n_star:>11s} {best:>5s} {plateau:>8s} "
               f"{e['max_n']:>4d}")
     print("  best = thread count of the shortest loop; '+' = the sweep's last point, so the "
@@ -159,18 +170,19 @@ def plot(entries, out_dir):
     for ax, test in zip(axes[0], tests):
         colour = CORE_TEST_COLOUR[test]
         rows = sorted((e for e in entries if e["test"] == test), key=lambda e: e["events"])
-        for machine in sorted({e["machine"] for e in rows}):
-            mine = [e for e in rows if e["machine"] == machine]
-            marker = MACHINE_MARKER.get(machine, "D")
+        for series in sorted({e["series"] for e in rows}):
+            mine = [e for e in rows if e["series"] == series]
+            marker = OPENDATA_MARKER if mine[0]["opendata"] \
+                else MACHINE_MARKER.get(mine[0]["machine"], "D")
             fitted = [e for e in mine if e["n_star"]]
             ax.plot([e["events"] for e in fitted],
                     [min(e["n_star"], e["max_n"]) for e in fitted], marker=marker,
-                    ls="-", color=colour, mfc="none", ms=8, label=f"{machine}: fitted $n^*$")
+                    ls="-", color=colour, mfc="none", ms=8, label=f"{series}: fitted $n^*$")
             ax.errorbar([e["events"] for e in mine], [e["best_n"] for e in mine],
                         yerr=[[e["best_n"] - e["plateau"][0] for e in mine],
                               [e["plateau"][1] - e["best_n"] for e in mine]],
                         marker=marker, ls="none", color=colour, ms=6, capsize=3,
-                        label=f"{machine}: fastest measured, {PLATEAU - 1:.0%} plateau")
+                        label=f"{series}: fastest measured, {PLATEAU - 1:.0%} plateau")
             # A sweep whose fastest point is its last only bounds the optimum from below, and
             # so does a fit whose n* lies beyond it.
             for e in mine:
@@ -182,7 +194,7 @@ def plot(entries, out_dir):
                     ax.annotate("", xy=(e["events"] * 1.15, e["max_n"] * 1.6),
                                 xytext=(e["events"] * 1.15, e["max_n"]),
                                 arrowprops={"arrowstyle": "->", "color": colour, "ls": ":"})
-        anchor = next((e for e in rows if e["n_star"]), None)
+        anchor = next((e for e in rows if e["n_star"] and not e["opendata"]), None)
         if anchor:
             xs = [x_lo, x_hi]
             ax.plot(xs, [anchor["n_star"] * math.sqrt(x / anchor["events"]) for x in xs],
@@ -229,7 +241,7 @@ def main():
         entries.extend(found)
     if not entries:
         return 1
-    entries.sort(key=lambda e: (e["machine"], e["events"], list(CORE_TEST_LABEL).index(e["test"])))
+    entries.sort(key=lambda e: (e["series"], e["events"], list(CORE_TEST_LABEL).index(e["test"])))
     print_table(entries)
     os.makedirs(args.out, exist_ok=True)
     drawn = [e for e in entries if not args.tests or e["test"] in args.tests]

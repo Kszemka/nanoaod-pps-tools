@@ -91,39 +91,12 @@ fresh_results() {
     mkdir -p "$1"
 }
 
-# dataset_json <results dir> <inventory csv | root file>: codec and branch count for
-# plot_real_vs_synthetic.py, which needs no ROOT and so cannot read them itself.
-dataset_json() {
-    "$PY" - "$@" <<'EOF'
-import csv, json, os, sys
-sys.path.insert(0, "test")
-out, source = sys.argv[1], sys.argv[2]
-names = {1: "ZLIB", 2: "LZMA", 4: "LZ4", 5: "ZSTD"}
-if source.endswith(".csv"):
-    with open(os.path.join(os.path.dirname(source), "core.txt")) as f:
-        core = {os.path.basename(line.strip()) for line in f if line.strip()}
-    rows = [r for r in csv.DictReader(open(source)) if r["name"] in core]
-    codecs = sorted({r["compression"] for r in rows})
-    branches = sorted({int(r["n_branches"]) for r in rows})
-    info = {"files": len(rows), "schemas": len({r["schema"] for r in rows}),
-            "branches": f"{branches[0]}-{branches[-1]}" if len(branches) > 1 else str(branches[0])}
-else:
-    import bench_common as bc
-    layout = bc.tree_layout(source)
-    codecs = [f"{layout['compression_algorithm']}:{layout['compression_level']}"]
-    info = {"branches": str(len(layout["branches"]))}
-info["codec"] = " ".join(names.get(int(c.split(":")[0]), c.split(":")[0]) + ":" + c.split(":")[1]
-                         for c in codecs)
-with open(os.path.join(out, "dataset.json"), "w") as f:
-    json.dump(info, f, indent=1)
-print("dataset.json:", info)
-EOF
-}
 
 echo "=== real: Open Data, chain --period 2016 [$(date +%H:%M:%S)] ==="
 REAL_RESULTS="${SCRATCH_BENCH}/results-helios-opendata-1tb"
 fresh_results "$REAL_RESULTS"
-dataset_json "$REAL_RESULTS" "$OPENDATA_DIR/local.csv"
+"$PY" test/dataset_json.py --out "$REAL_RESULTS" --input "$OPENDATA_DIR/core.txt" \
+    --inventory "$OPENDATA_DIR/local.csv"
 # The 1-thread run on LZMA files can take well over the default 40 min.
 DATASET=real DATA_DIR="$OPENDATA_DIR" CHAIN_ARGS="--period 2016" THREADS_LIST="$REAL_THREADS" \
     RESULTS="$REAL_RESULTS" RUN_TIMEOUT=14400 bash test/run_all.sh
@@ -132,7 +105,7 @@ if [[ "$CONTROL" == 1 ]]; then
     echo "=== control: artificial 1 TB, chain [$(date +%H:%M:%S)] ==="
     CONTROL_RESULTS="${SCRATCH_BENCH}/results-helios-control-1tb"
     fresh_results "$CONTROL_RESULTS"
-    dataset_json "$CONTROL_RESULTS" "$SYNTH_DIR/ds_1.root"
+    "$PY" test/dataset_json.py --out "$CONTROL_RESULTS" --input "$SYNTH_DIR/ds_1.root"
     # run_benchmark.sh, not run_all.sh: validate.py has already run in this job.
     DATASET=big DATA_DIR="$SYNTH_DIR" THREADS_LIST="$CONTROL_THREADS" RESULTS="$CONTROL_RESULTS" \
         RUN_TIMEOUT=2400 bash test/run_benchmark.sh
@@ -140,7 +113,8 @@ else
     echo "=== control skipped (CONTROL=0) ==="
 fi
 
-echo "done [$(date +%H:%M:%S)]. Copy both results directories to results/helios/ and run"
+echo "done [$(date +%H:%M:%S)]. Copy both results directories to results/real-1/ and run"
 echo "  python test/plot_real_vs_synthetic.py --synthetic results/helios/full-1tb \\"
-echo "      --control results/helios/control-1tb --real results/helios/opendata-1tb"
+echo "      --control results/real-1/results-helios-control-1tb \\"
+echo "      --real results/real-1/results-helios-opendata-1tb"
 sacct -j "${SLURM_JOB_ID}" --format=JobID,JobName,State,Elapsed,MaxRSS,NCPUS,ReqMem || true

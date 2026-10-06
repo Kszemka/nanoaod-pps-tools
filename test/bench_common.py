@@ -185,10 +185,13 @@ def tree_layout(path, tree="Events"):
     clusters = 0
     while iterator.Next() < entries:
         clusters += 1
+    branches = list(t.GetListOfBranches())
     layout = {
         "entries": entries,
         "clusters": clusters,
-        "branches": [b.GetName() for b in t.GetListOfBranches()],
+        "branches": [b.GetName() for b in branches],
+        # Every TTree opened on the file holds these baskets' index for every branch, read or not.
+        "baskets": sum(int(b.GetWriteBasket()) for b in branches),
         "compression_algorithm": int(f.GetCompressionAlgorithm()),
         "compression_level": int(f.GetCompressionLevel()),
         "size_bytes": int(f.GetSize()),

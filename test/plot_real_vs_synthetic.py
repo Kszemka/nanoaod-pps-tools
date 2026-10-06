@@ -4,8 +4,8 @@ The 5-filter chain's strong scaling on the artificial 1 TB set against ~1 TB of 
 Open Data, on the same machine.
 
     plot_real_vs_synthetic.py --synthetic results/helios/full-1tb \
-        --control results/helios/control-1tb --real results/helios/opendata-1tb \
-        [--out DIR]
+        --control results/real-1/results-helios-control-1tb \
+        --real results/real-1/results-helios-opendata-1tb [--out DIR]
 
 --synthetic is the original campaign on ds_1..ds_96.root, --control a few of its points
 measured again in the job that measured --real, so that a gap between --control and
