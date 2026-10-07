@@ -917,10 +917,11 @@ def plot_rss_profile(results_dir, plt, name="12_rss_over_time.png", prefix=None)
 
     fig, ax = plt.subplots(figsize=(8.4, 4.8))
     colours = plt.get_cmap("viridis")
-    # The sampler is a Python thread and the event loop holds the GIL in C++, so it is starved
-    # exactly where the profile matters: a 48-thread run leaves ~10 samples, one of them after
-    # the loop. Solid means consecutive samples, dashed means interpolation across a gap, so
-    # the figure cannot be read as a measured ramp where nothing was measured.
+    # Traces with rss_trace_source "statm" came from a Python thread, which the event loop
+    # starved of the GIL: no sample between its start and its end. "statm-process" traces are
+    # sampled from outside the interpreter and cover the loop. Solid means consecutive samples,
+    # dashed means interpolation across a gap, so the old figures cannot be read as a measured
+    # ramp where nothing was measured.
     gap = 1.0
     for index, (threads, times, rss) in enumerate(traces):
         colour = colours(index / max(len(traces) - 1, 1))

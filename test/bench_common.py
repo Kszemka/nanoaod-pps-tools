@@ -21,6 +21,7 @@ import argparse
 import json
 import os
 import resource
+import subprocess
 import sys
 import threading
 import time
@@ -274,16 +275,63 @@ def proc_io():
     return {"rchar": int(fields["rchar"]), "read_bytes": int(fields["read_bytes"])}
 
 
+# Run as a separate interpreter, without ROOT: argv = pid, trace path, interval. Stops when the
+# measured process is gone. The phase comes from <trace>.phase, which the measured process
+# replaces atomically, so a read sees the old name or the new one.
+_RSS_SAMPLER = r"""
+import os, sys, time
+pid, path, interval = int(sys.argv[1]), sys.argv[2], float(sys.argv[3])
+page_kb = os.sysconf("SC_PAGE_SIZE") // 1024
+phase, start = "start", time.perf_counter()
+with open(path, "w", buffering=1) as out:
+    out.write("t_s,rss_kb,phase\n")
+    while True:
+        try:
+            with open(f"/proc/{pid}/statm") as f:
+                rss = int(f.read().split()[1]) * page_kb
+        except (OSError, ValueError, IndexError):
+            break
+        try:
+            with open(path + ".phase") as f:
+                phase = f.read().strip() or phase
+        except OSError:
+            pass
+        out.write(f"{time.perf_counter() - start:.3f},{rss},{phase}\n")
+        time.sleep(interval)
+try:
+    os.remove(path + ".phase")
+except OSError:
+    pass
+"""
+
+
 def start_rss_trace(interval=0.1):
     """
     Samples this process's RSS into $RSS_TRACE, tagged with the phase it was taken in.
+    Returns the function that sets the phase, or None without $RSS_TRACE.
 
-    Sampled from inside the measured process rather than by the runner: the runner launches the
+    Started from the measured process rather than by the runner: the runner launches the
     benchmark behind `timeout` and `/usr/bin/time`, so the pid it could see was the wrapper's.
+    On Linux the sampling itself is a separate process: PyROOT keeps the GIL through the C++
+    event loop, so a sampler thread in this interpreter took no sample from the start of the
+    loop to its end. Off Linux it is such a thread, on getrusage.
     """
     path = os.environ.get("RSS_TRACE")
     if not path:
         return None
+
+    if os.path.exists(f"/proc/{os.getpid()}/statm"):
+        phase_path = path + ".phase"
+
+        def set_phase(name):
+            with open(phase_path + ".tmp", "w") as f:
+                f.write(name)
+            os.replace(phase_path + ".tmp", phase_path)
+
+        set_phase("start")
+        subprocess.Popen([sys.executable, "-c", _RSS_SAMPLER, str(os.getpid()), path,
+                          str(interval)], stdin=subprocess.DEVNULL, close_fds=True)
+        return set_phase
 
     handle = open(path, "w", buffering=1)
     handle.write("t_s,rss_kb,phase\n")
@@ -298,7 +346,7 @@ def start_rss_trace(interval=0.1):
             time.sleep(interval)
 
     threading.Thread(target=sample, daemon=True).start()
-    return state
+    return lambda name: state.update(phase=name)
 
 
 class Bench:
@@ -335,7 +383,9 @@ class Bench:
             # Everything resident before any measurement started: the interpreter, PyROOT and
             # numpy -- ~470 MB, which on small inputs is most of the peak.
             "rss_baseline_kb": current_rss_kb(),
-            "rss_trace_source": "statm" if os.path.exists("/proc/self/statm") else "getrusage",
+            # "statm" in older records: a sampler thread, starved through the event loop.
+            "rss_trace_source": ("statm-process" if os.path.exists("/proc/self/statm")
+                                 else "getrusage"),
         }
 
     @contextmanager
@@ -347,7 +397,7 @@ class Bench:
         therefore the warmup -- unavailable).
         """
         if self._trace is not None:
-            self._trace["phase"] = name
+            self._trace(name)
         bytes_before = ROOT.TFile.GetFileBytesRead()
         io_before = proc_io()
         start = time.perf_counter()
@@ -369,7 +419,7 @@ class Bench:
                 self.record[key] = (self.record.get(key, 0)
                                     + io_after[counter] - io_before[counter])
         if self._trace is not None:
-            self._trace["phase"] = f"after_{name}"
+            self._trace(f"after_{name}")
 
     def override_bytes(self, name, value):
         """

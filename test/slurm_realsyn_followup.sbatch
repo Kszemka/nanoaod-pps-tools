@@ -21,7 +21,8 @@
 #            the real counterparts of full-100m and full-355m on the optimum-vs-size figure
 #                                                     -> results-helios-opendata-weak4, -weak16
 #   memory   the chain on a list naming ds_x32_head.root (make_head.py: the first 1/32 of
-#            ds_x32, same branches and codec, 1/32 of the clusters) MEM_COPIES times, warm. If
+#            ds_x32, same branches and codec, 36 clusters and ~520 k baskets against 1110 and
+#            5.04 M, since the copy writes its own baskets) MEM_COPIES times, warm. If
 #            the memory per thread follows branches x baskets rather than branches alone, it
 #            drops well below ds_x32's ~200 MB here         -> results-helios-memtest
 #            It also writes the layouts (branches, baskets per file) of ds_x32.root and of the

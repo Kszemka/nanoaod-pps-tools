@@ -16,8 +16,11 @@ whose layout is known, and its residuals are printed, so a model that does not h
     plot_memory_layout.py --out DIR \
         --set "results/helios/slim-1.5tb:chain11:slim:results/real-1/results-helios-memtest/layout-slim11" \
         --set "results/helios/full-11m:chain:ds_x32:results/real-1/results-helios-memtest/layout-ds_x32" \
+        --set "results/helios/full-1tb:chain:ds_x32 x96:results/real-1/results-helios-memtest/layout-ds_x32" \
         --set "results/real-1/results-helios-memtest:chain:ds_x32 head" \
-        --set "results/real-1/results-helios-opendata-1tb:chain:Open Data"
+        --set "results/real-1/results-helios-opendata-weak4:chain:Open Data 89 M" \
+        --set "results/real-1/results-helios-opendata-weak16:chain:Open Data 356 M" \
+        --set "results/real-1/results-helios-opendata-1tb:chain:Open Data 1 TB"
 
 A set is DIR:TEST:LABEL[:LAYOUT]. LAYOUT is a directory with dataset.json (dataset_json.py),
 or BRANCHES/BASKETS by hand; without it DIR/dataset.json is used. Writes 16_memory_layout.png
@@ -35,9 +38,14 @@ from plot_optimum import solve3
 from plot_results import core_rows, dedupe_labels, fit_linear, flag_disturbed, load_records, \
     median
 
-COLOURS = ["#762a83", "#1b7837", "#e08214", "#d73027", "#4575b4", "#999999"]
+COLOURS = ["#762a83", "#1b7837", "#e08214", "#d73027", "#4575b4", "#999999", "#000000",
+           "#8c510a"]
 FIELDS = ["label", "dir", "test", "branches", "baskets_per_file", "clusters_per_file",
-          "rss_1_thread_mb", "mb_per_thread", "model_mb", "residual_mb"]
+          "rss_1_thread_mb", "mb_per_thread", "mb_per_thread_low", "mb_per_thread_high",
+          "model_mb", "residual_mb"]
+# On inputs of many files RSS is not linear in threads (full-1tb: 385 MB per thread up to 32,
+# 124 MB above), so the slope is also given on either side of this thread count.
+SPLIT_THREADS = 32
 
 
 def read_layout(results_dir, spec):
@@ -60,6 +68,11 @@ def sweep(results_dir, test):
                 and r.get("peak_rss_kb"):
             by_threads.setdefault(r["threads"], []).append(r["peak_rss_kb"] / 1024)
     return sorted((n, median(v)) for n, v in by_threads.items())
+
+
+def slope(points):
+    """MB per thread of a straight line through the points; None below 2 thread counts."""
+    return fit_linear(*zip(*points))[1] if len(points) >= 2 else None
 
 
 def parse_set(text):
@@ -86,8 +99,11 @@ def plot(rows, sweeps, model, path):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
+    from itertools import cycle
+    from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
+
     fig, (ax_rss, ax_cost) = plt.subplots(1, 2, figsize=(12, 4.6))
-    for row, points, colour in zip(rows, sweeps, COLOURS):
+    for row, points, colour in zip(rows, sweeps, cycle(COLOURS)):
         xs, ys = zip(*points)
         ax_rss.plot(xs, [y / 1024 for y in ys], marker="o", color=colour, label=row["label"])
         intercept, slope = row["fit"]
@@ -105,6 +121,10 @@ def plot(rows, sweeps, model, path):
     ax_rss.grid(alpha=0.3)
     ax_rss.legend(fontsize=8)
     ax_cost.set_xscale("log")
+    ax_cost.xaxis.set_major_locator(LogLocator(subs=(1, 2, 5)))
+    ax_cost.xaxis.set_major_formatter(FuncFormatter(
+        lambda x, _: f"{x / 1e6:g} M" if x >= 1e6 else f"{x / 1e3:g} k"))
+    ax_cost.xaxis.set_minor_formatter(NullFormatter())
     ax_cost.set_xlabel("baskets per file")
     ax_cost.set_ylabel("memory per extra thread [MB]")
     title = "per-thread cost against file layout"
@@ -143,6 +163,8 @@ def main():
             "baskets_per_file": layout.get("baskets_per_file"),
             "clusters_per_file": layout.get("clusters_per_file"),
             "rss_1_thread_mb": points[0][1], "mb_per_thread": fit[1], "fit": fit,
+            "mb_per_thread_low": slope([p for p in points if p[0] <= SPLIT_THREADS]),
+            "mb_per_thread_high": slope([p for p in points if p[0] >= SPLIT_THREADS]),
             "model_mb": None, "residual_mb": None,
         })
         sweeps.append(points)
@@ -155,14 +177,18 @@ def main():
                 row["model_mb"] = a + b * row["branches"] + c * row["baskets_per_file"]
                 row["residual_mb"] = row["mb_per_thread"] - row["model_mb"]
 
+    low, high = f"<={SPLIT_THREADS}", f">={SPLIT_THREADS}"
     print(f"{'input':24s} {'branches':>8s} {'baskets/file':>12s} {'MB/thread':>9s} "
-          f"{'model':>7s} {'resid':>7s}")
+          f"{low:>6s} {high:>6s} {'model':>7s} {'resid':>7s}")
     for row in rows:
         def show(value, spec):
             return "-" if value is None else format(value, spec)
         print(f"{row['label'][:24]:24s} {show(row['branches'], '8.0f')} "
               f"{show(row['baskets_per_file'], '12.0f')} {row['mb_per_thread']:9.1f} "
+              f"{show(row['mb_per_thread_low'], '6.1f')} {show(row['mb_per_thread_high'], '6.1f')} "
               f"{show(row['model_mb'], '7.1f')} {show(row['residual_mb'], '7.1f')}")
+    print(f"  MB/thread: slope over all thread counts (the model's input); {low}, {high}: "
+          "the same on either side")
     if model:
         a, b, c = model
         print(f"  MB/thread = {a:.1f} MB + {b * 1024:.2f} kB x branches + "

@@ -5,8 +5,10 @@ Writes the first N entries of a file: the same branches and codec, fewer cluster
 Exists for one experiment: does the memory each ImplicitMT worker costs depend on how many
 branches a file stores, or on branches x baskets, i.e. also on how long the file is? ds_x32 is
 32 copies of examples/test.root merged into one 10.8 GB file (1111 clusters); its head keeps all
-~2000 branches and ZSTD:5 but has 1/32 of the clusters. A list naming the head many times has
-the events of the full set with short files.
+~2000 branches and ZSTD:5 but has 1/32 of the entries and clusters. The re-compression below
+writes its own baskets, about 7 per branch and cluster against ds_x32's 2.3, so the head holds
+about 1/10 of the baskets (520 k against 5.04 M), not 1/32. A list naming the head many times
+has the events of the full set with short files.
 
     make_head.py --input ds_x32.root --output ds_x32_head.root [--entries 346825]
 

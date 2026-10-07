@@ -4,6 +4,10 @@
 # <out-dir>/<era>/<PD>/<file>, verifying each file's adler32 checksum against the portal's
 # index (opendata_index.py). Open Data is public: no account, certificate or proxy is needed.
 #
+# The same for CMS data from DAS (das_index.py: index.csv and urls.txt with root:// URIs at an
+# AAA redirector), with --transport xrdcp: xrdcp then authenticates with $X509_USER_PROXY and
+# verifies against $X509_CERT_DIR (grid_env.sh, slurm_fetch_das.sbatch).
+#
 #   ./test/fetch_opendata.sh --urls urls.txt --index index.csv \
 #       [--out-dir $SCRATCH/bench/data2] [--jobs 10] [--streams 1] \
 #       [--transport xrdcp|https] [--dry-run]
@@ -97,6 +101,12 @@ awk -F, -v out="$OUT_DIR" '
     }
     END { exit bad }
 ' "$INDEX" "$URLS" >"$MANIFEST"
+# The https path rewrites eospublic URIs to opendata.cern.ch; any other server needs xrdcp.
+if [[ "$TRANSPORT" == https ]] && grep -qv '^root://eospublic\.cern\.ch/' "$MANIFEST"; then
+    echo "ERROR: --transport https only works for CERN Open Data (root://eospublic.cern.ch/);" \
+        "use --transport xrdcp." >&2
+    exit 1
+fi
 
 file_size() { wc -c <"$1" | tr -d ' '; }
 

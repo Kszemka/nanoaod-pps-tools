@@ -12,7 +12,8 @@ measured again in the job that measured --real, so that a gap between --control 
 --synthetic is the file system having changed, not the data. --control is optional.
 
 Writes 15_real_vs_synthetic.png (loop time, speedup against one thread and peak RSS against
-the thread count) and summary_real_vs_synthetic.csv, and prints the same table. Codec and
+the thread count, each with the min-max of the repeats; peak RSS with straight lines up to and
+from 32 threads) and summary_real_vs_synthetic.csv, and prints the same table. Codec and
 branch count come from dataset.json in a results directory when slurm_real_vs_synthetic.sbatch
 wrote one there; the synthetic set falls back to the control's, which reads the same files.
 
@@ -41,7 +42,11 @@ STYLE = {
 }
 FIELDS = ["set", "events", "input_gb", "codec", "branches", "read_gb_t1", "read_pct_t1",
           "events_per_s_t1", "loop_s_t1", "loop_min_s", "threads_at_min", "max_speedup",
-          "n_star", "b_ms", "mb_per_thread", "events_passed"]
+          "n_star", "b_ms", "mb_per_thread", "mb_per_thread_low", "mb_per_thread_high",
+          "events_passed"]
+# Peak RSS against threads bends on multi-file inputs (full-1tb: 385 MB per thread up to 32
+# threads, 124 above), so one straight line through all of it describes neither range.
+SPLIT_THREADS = 32
 
 
 def sweep(results_dir):
@@ -57,13 +62,18 @@ def sweep(results_dir):
     points = []
     for n in sorted(by_threads):
         group = by_threads[n]
+        rss = [r["peak_rss_kb"] / 1024 ** 2 for r in group if r.get("peak_rss_kb")]
         points.append({
             "threads": n,
             "loop": median([r["wall_loop"] for r in group]),
             "loop_lo": min(r["wall_loop"] for r in group),
             "loop_hi": max(r["wall_loop"] for r in group),
-            "rss_gb": median([r["peak_rss_kb"] / 1024 ** 2 for r in group
-                              if r.get("peak_rss_kb")] or [0]) or None,
+            "rss_gb": median(rss) if rss else None,
+            # The peak is a high-water mark and moves with how the tasks happened to be
+            # scheduled; the spread across repeats is what a step between neighbours is
+            # compared against.
+            "rss_lo": min(rss) if rss else None,
+            "rss_hi": max(rss) if rss else None,
             "runs": group,
         })
     return points
@@ -89,7 +99,7 @@ def summarise(name, points, info):
                      for p in points for r in p["runs"]} - {None})
     fit = fit_optimum([(p["threads"], p["loop"]) for p in points]) if len(points) >= 4 else None
     rss = [(p["threads"], p["rss_gb"] * 1024) for p in points if p["rss_gb"]]
-    slope = fit_linear(*zip(*rss))[1] if len({n for n, _ in rss}) >= 2 else None
+    slope = mb_slope(rss)
     return {
         "set": name,
         "events": events,
@@ -106,9 +116,16 @@ def summarise(name, points, info):
         "n_star": (fit[1] / fit[2]) ** 0.5 if fit and fit[1] > 0 and fit[2] > 0 else None,
         "b_ms": fit[2] * 1000 if fit else None,
         "mb_per_thread": slope,
+        "mb_per_thread_low": mb_slope([p for p in rss if p[0] <= SPLIT_THREADS]),
+        "mb_per_thread_high": mb_slope([p for p in rss if p[0] >= SPLIT_THREADS]),
         # More than one value would mean the thread count changed the answer.
         "events_passed": " ".join(str(v) for v in passed),
     }
+
+
+def mb_slope(points):
+    """Slope of a straight line through (threads, MB); None below 2 thread counts."""
+    return fit_linear(*zip(*points))[1] if len({n for n, _ in points}) >= 2 else None
 
 
 def fmt(value, spec):
@@ -122,12 +139,16 @@ def print_table(rows):
                ("ev/s t1", "events_per_s_t1", ".3g"), ("T(1) s", "loop_s_t1", ".0f"),
                ("Tmin s", "loop_min_s", ".1f"), ("at n", "threads_at_min", "d"),
                ("max S", "max_speedup", ".1f"), ("n*", "n_star", ".0f"), ("b ms", "b_ms", ".1f"),
-               ("MB/thr", "mb_per_thread", ".0f"), ("passed", "events_passed", "s")]
+               ("MB/thr", "mb_per_thread", ".0f"),
+               (f"<={SPLIT_THREADS}", "mb_per_thread_low", ".0f"),
+               (f">={SPLIT_THREADS}", "mb_per_thread_high", ".0f"),
+               ("passed", "events_passed", "s")]
     print("  ".join(f"{head:>9s}" for head, _, _ in columns))
     for row in rows:
         print("  ".join(f"{fmt(row[key], spec):>9s}" for _, key, spec in columns))
     print("  T = event-loop time; S = T(1)/T(n); n*, b from T(n) = c + a/n + b*n "
-          "(plot_optimum.py); MB/thr = slope of a straight line through peak RSS")
+          "(plot_optimum.py); MB/thr = slope of a straight line through peak RSS, overall and "
+          f"up to / from {SPLIT_THREADS} threads")
 
 
 def write_csv(rows, path):
@@ -156,15 +177,27 @@ def plot(sets, rows, path):
                       capsize=3, label=label, **style)
         if points[0]["threads"] == 1:
             ax_s.plot(xs, [points[0]["loop"] / p["loop"] for p in points], label=label, **style)
-        rss = [(p["threads"], p["rss_gb"]) for p in points if p["rss_gb"]]
-        if rss:
-            ax_m.plot(*zip(*rss), label=label, **style)
-            row = next(r for r in rows if r["set"] == name)
-            if row["mb_per_thread"] is not None and name != "control":
-                intercept, slope = fit_linear(*zip(*rss))
-                ends = [rss[0][0], rss[-1][0]]
-                ax_m.plot(ends, [intercept + slope * n for n in ends], ls=":",
-                          color=style["color"], label=f"{slope * 1024:.0f} MB per thread")
+        with_rss = [p for p in points if p["rss_gb"]]
+        if with_rss:
+            ax_m.errorbar([p["threads"] for p in with_rss], [p["rss_gb"] for p in with_rss],
+                          yerr=[[p["rss_gb"] - p["rss_lo"] for p in with_rss],
+                                [p["rss_hi"] - p["rss_gb"] for p in with_rss]],
+                          capsize=3, label=label, **style)
+            rss = [(p["threads"], p["rss_gb"]) for p in with_rss]
+            if name != "control":
+                fits = []
+                for part in ([p for p in rss if p[0] <= SPLIT_THREADS],
+                             [p for p in rss if p[0] >= SPLIT_THREADS]):
+                    if len({n for n, _ in part}) < 2:
+                        continue
+                    intercept, slope = fit_linear(*zip(*part))
+                    ends = [part[0][0], part[-1][0]]
+                    ax_m.plot(ends, [intercept + slope * n for n in ends], ls=":", lw=1.4,
+                              color=style["color"])
+                    fits.append(f"{slope * 1024:.0f}")
+                if fits:
+                    ax_m.plot([], [], ls=":", color=style["color"],
+                              label=" / ".join(fits) + f" MB per thread (to / from {SPLIT_THREADS})")
     ax_s.plot(ticks, ticks, ls="--", color="grey", lw=0.8, label="ideal")
     labelled = [t for t in ticks if t in LABELLED]
     for ax in (ax_t, ax_s):
