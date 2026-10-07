@@ -23,7 +23,8 @@ import math
 
 import numpy as np
 
-import bench_common as bc
+# Not bench_common: that imports ROOT, which bench_pool.py's uproot workers must not load.
+import bench_spec as bc
 import app.diamond_geometry as diamond_geometry
 
 try:

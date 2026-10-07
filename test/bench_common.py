@@ -31,74 +31,18 @@ from contextlib import contextmanager
 # versions must not be averaged together.
 SCHEMA_VERSION = 3
 
-REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-for path in (REPO_ROOT, os.path.join(REPO_ROOT, "corrections-examples")):
-    if path not in sys.path:
-        sys.path.insert(0, path)
+from bench_spec import (  # noqa: F401 -- re-exported, the benchmarks use bc.<name>
+    CHAIN_COLUMNS, CHAIN_STEPS, CHAINS, DEFAULT_ARM, DEFAULT_PERIOD, DEFAULT_POT,
+    DEFAULT_RP_ID, EFFICIENCY_COLUMNS, LONG_CHAIN_STEPS, MAX_CHAIN_LEN, PERIODS, REPO_ROOT,
+    XI_RANGE, chain_columns, chain_steps, input_files, is_file_list,
+)
 
 import ROOT  # noqa: E402
 
 ROOT.gROOT.SetBatch(True)
 ROOT.gErrorIgnoreLevel = ROOT.kWarning
 
-DEFAULT_RP_ID = 22
-DEFAULT_ARM = "45"
-DEFAULT_POT = "box"
-
-# Filter chain for TEST 2, in order -- the notebook's rdata_analysis() chain, with its
-# nPPSLocalTrack > 0 baseline as an explicit first step so --chain-len sweeps the whole thing.
-CHAIN_STEPS = ["pps", "double_arm", "diamond", "rp_id", "xi"]
-# The 1 TB campaign's chain: five cuts on further PPS columns and one on
-# PPSLocalTrack_multiRPProtonIdx, which is there because rp_id reads PPSLocalTrack_decRPId a
-# second time, then the five steps above -- eleven filters over ten distinct branches. The added
-# steps come first, weakest cut first, because after the five steps above they pass every event
-# that reaches them.
-LONG_CHAIN_STEPS = ["theta_y", "multi_proton", "multi_rp_idx", "single_rp_idx", "time",
-                    "time_unc"] + CHAIN_STEPS
-CHAINS = {"base": CHAIN_STEPS, "long": LONG_CHAIN_STEPS}
-CHAIN_COLUMNS = {
-    "pps": "nPPSLocalTrack",
-    "double_arm": "PPSLocalTrack_decRPId",
-    "diamond": "PPSLocalTrack_rpType",
-    "rp_id": "PPSLocalTrack_decRPId",
-    "xi": "Proton_singleRP_xi",
-    "multi_rp_idx": "PPSLocalTrack_multiRPProtonIdx",
-    "single_rp_idx": "PPSLocalTrack_singleRPProtonIdx",
-    "time": "PPSLocalTrack_time",
-    "time_unc": "PPSLocalTrack_timeUnc",
-    "theta_y": "Proton_singleRP_thetaY",
-    "multi_proton": "nProton_singleRP",
-}
-MAX_CHAIN_LEN = len(CHAIN_STEPS)
-EFFICIENCY_COLUMNS = ["PPSLocalTrack_x", "PPSLocalTrack_y", "PPSLocalTrack_decRPId"]
-XI_RANGE = (0.05, 0.1)
-# The detector-dependent parameters of the chain, per data-taking period. "2023" is the
-# notebook's analysis on the Tier0 replay (and the ds_xN copies of it): pots 23|123 and 3|103,
-# diamond timing detectors, RP 22. In 2016 PPS ran with strip detectors only, in pots 2, 3,
-# 102 and 103, so there the 2023 chain rejects every event at double_arm. The 2016 variant
-# keeps the same five steps over the same columns with that year's pots and detector type.
-PERIODS = {
-    "2023": {"arms": ((23, 123), (3, 103)), "detector": "diamond", "rp_type": 5, "rp_id": 22},
-    "2016": {"arms": ((2, 3), (102, 103)), "detector": "strip", "rp_type": 3, "rp_id": 3},
-}
-DEFAULT_PERIOD = "2023"
-
 WARMUP_INPUT = os.path.join(REPO_ROOT, "examples", "test.root")
-
-
-def chain_steps(chain_len, chain="base"):
-    """The first `chain_len` steps of the chain."""
-    return CHAINS[chain][:chain_len]
-
-
-def chain_columns(chain_len, chain="base"):
-    """Distinct branches the first `chain_len` steps need, in first-use order."""
-    columns = []
-    for name in chain_steps(chain_len, chain):
-        column = CHAIN_COLUMNS[name]
-        if column not in columns:
-            columns.append(column)
-    return columns
 
 
 def build_parser(description, impls, modes=("vector", "loop")):
@@ -123,27 +67,6 @@ def setup_root(threads):
     if threads and threads > 0:
         ROOT.EnableImplicitMT(threads)
     return threads or 1
-
-
-def is_file_list(path):
-    return path.endswith(".txt")
-
-
-def input_files(path):
-    """
-    The .root files behind --input: the file itself, or the entries of a .txt list.
-
-    Relative entries resolve against the list's own directory, so a list written next to the
-    data stays valid wherever the data directory is mounted. Blank lines and # comments are
-    skipped.
-    """
-    if not is_file_list(path):
-        return [path]
-    base = os.path.dirname(os.path.abspath(path))
-    with open(path) as f:
-        entries = [line.strip() for line in f]
-    return [e if os.path.isabs(e) else os.path.join(base, e)
-            for e in entries if e and not e.startswith("#")]
 
 
 def warmup(args, build_and_trigger, tree="Events"):
@@ -201,15 +124,34 @@ def tree_layout(path, tree="Events"):
     return layout
 
 
+def _inventory_entries():
+    """File name -> entries from the inventory CSV in $EVENT_COUNTS, or {} without one."""
+    path = os.environ.get("EVENT_COUNTS")
+    if not path or not os.path.exists(path):
+        return {}
+    import csv
+
+    with open(path) as f:
+        return {row["name"]: int(row["entries"]) for row in csv.DictReader(f)
+                if row.get("entries") and not row.get("error")}
+
+
 def count_events(args, tree="Events"):
     """
     Entry count straight from the files' metadata.
 
     A Count() action would be an entire event loop -- on a 14 M event file that was ~150 s per
-    run, spent purely on bookkeeping and charged to the setup phase.
+    run, spent purely on bookkeeping and charged to the setup phase. Opening each file is not
+    free either: ~0.2 s for a ~2000-branch NanoAOD on Lustre, ~5 min per run over the 1453 Run 3
+    files. With $EVENT_COUNTS (an inventory_files.py CSV) the counts come from there, and the
+    files are opened only if one of them is not in it.
     """
+    files = input_files(args.input)
+    known = _inventory_entries()
+    if known and all(os.path.basename(path) in known for path in files):
+        return sum(known[os.path.basename(path)] for path in files)
     total = 0
-    for path in input_files(args.input):
+    for path in files:
         f = ROOT.TFile.Open(path)
         total += int(f.Get(tree).GetEntries())
         f.Close()
@@ -278,17 +220,72 @@ def proc_io():
 # Run as a separate interpreter, without ROOT: argv = pid, trace path, interval. Stops when the
 # measured process is gone. The phase comes from <trace>.phase, which the measured process
 # replaces atomically, so a read sees the old name or the new one.
+#
+# rss_kb is the measured process plus its descendants: bench_pool.py's worker processes hold
+# the memory of uproot-pool and python-pool. The sampler is a child of the measured process
+# itself and leaves itself out; a single-process benchmark has no other children, so its trace
+# is the process alone, as before.
 _RSS_SAMPLER = r"""
 import os, sys, time
 pid, path, interval = int(sys.argv[1]), sys.argv[2], float(sys.argv[3])
 page_kb = os.sysconf("SC_PAGE_SIZE") // 1024
+me = os.getpid()
+
+def rss_kb(p):
+    with open(f"/proc/{p}/statm") as f:
+        return int(f.read().split()[1]) * page_kb
+
+def children_by_ppid(p):
+    out = []
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat") as f:
+                if int(f.read().rsplit(")", 1)[1].split()[1]) == p:
+                    out.append(int(entry))
+        except (OSError, ValueError, IndexError):
+            pass
+    return out
+
+# Without CONFIG_PROC_CHILDREN the kernel has no children files, and the tree is found by PPID.
+has_children_files = os.path.exists(f"/proc/{me}/task/{me}/children")
+
+def children(p):
+    if not has_children_files:
+        return children_by_ppid(p)
+    out = []
+    try:
+        tasks = os.listdir(f"/proc/{p}/task")
+    except OSError:
+        return out
+    for task in tasks:
+        try:
+            with open(f"/proc/{p}/task/{task}/children") as f:
+                out.extend(int(c) for c in f.read().split())
+        except (OSError, ValueError):
+            pass
+    return out
+
+def tree_rss_kb(root):
+    total, todo = rss_kb(root), children(root)
+    while todo:
+        p = todo.pop()
+        if p == me:
+            continue
+        try:
+            total += rss_kb(p)
+        except (OSError, ValueError, IndexError):
+            continue
+        todo.extend(children(p))
+    return total
+
 phase, start = "start", time.perf_counter()
 with open(path, "w", buffering=1) as out:
     out.write("t_s,rss_kb,phase\n")
     while True:
         try:
-            with open(f"/proc/{pid}/statm") as f:
-                rss = int(f.read().split()[1]) * page_kb
+            rss = tree_rss_kb(pid)
         except (OSError, ValueError, IndexError):
             break
         try:

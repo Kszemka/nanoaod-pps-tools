@@ -30,9 +30,13 @@ Jedna ścieżka: `slurm_benchmark.sbatch` → `run_all.sh` → `validate.py` + `
 | `das_index.py` | z DAS: jedna wersja przetworzenia na (PD, era), tylko pełne kopie na dysku, pliki z rozmiarem i adler32; wybór do N GB |
 | `slurm_fetch_das.sbatch` | Run 3 z DAS do `data3`: kontrole proxy i kwoty, indeks, pobranie przez AAA, weryfikacja, listy, `READY` |
 | `fetch_eos.sh` | Run 3 z EOS do `data3`: rsync po SSH przez lxplus, ręcznie w `tmux` (kod OTP na połączenie), 9 strumieni, rozmiary |
-| `slurm_fetch_eos.sbatch` | po `fetch_eos.sh`: rozmiary, `pps_fraction`, listy, `READY` |
+| `slurm_fetch_eos.sbatch` | po `fetch_eos.sh`: rozmiary, `pps_fraction`, listy (przeplecione, zagnieżdżone), kontrola łańcucha, `READY` |
+| `check_chain11.py` | przed kampanią na mieszanym zbiorze: typy 10 kolumn łańcucha i liczniki po każdym z 11 filtrów, plik na (era, wersja) |
+| `slurm_run3.sbatch`, `run3_helios.sh` | kampania Run 3: zadania J1–J4 (`JOB=`), wysyłane po kolei (`afterany`) |
 | `bench_filter.py`, `bench_chain.py`, `bench_efficiency.py` | pojedynczy pomiar (TEST 1–3) |
-| `bench_common.py` | parser argumentów, fazy czasu, liczniki bajtów i RSS, rekord `BENCH` |
+| `bench_pool.py` | łańcuch na całym węźle bez ImplicitMT: uproot (`uproot-pool`) albo AsNumpy (`python-pool`) w puli procesów, plik na zadanie |
+| `bench_common.py` | parser argumentów, fazy czasu, liczniki bajtów i RSS (z procesami potomnymi), rekord `BENCH` |
+| `bench_spec.py` | łańcuchy, kolumny, cięcia i listy wejść, bez ROOT-a (dla procesów puli uproot) |
 | `impl_rdf.py`, `impl_python.py`, `impl_uproot.py` | implementacje mierzonych operacji |
 | `plot_results.py` | `raw.jsonl` → `bench.csv` + wykresy (nie wymaga ROOT-a, tylko matplotlib) |
 | `plot_optimum.py` | optimum liczby wątków względem rozmiaru wejścia, z kilku katalogów wyników |
@@ -460,10 +464,51 @@ sbatch test/slurm_fetch_eos.sbatch        # po „done”
 - **Wznawianie:** ponowne uruchomienie `fetch_eos.sh` dociąga brakujące pliki. Na końcu usuwa
   bilet (`DELETE_TICKET=1`).
 - **Zadanie:** sprawdza, że każdy plik z listy jest i ma swój rozmiar, potem `inventory_files.py`
-  liczy `pps_fraction`, a `make_filelists.py` buduje `core.txt` (cały zbiór), `weak_N.txt`,
-  `impl.txt`, `sets.json` i `READY`.
+  liczy `pps_fraction` (plik bez którejś z kolumn łańcucha 11 filtrów odpada), a
+  `make_filelists.py --interleave --nested` buduje `core.txt` (cały zbiór, pliki przeplecione
+  tak, że każdy początek listy ma skład całości po erze i PD), `weak_N.txt` (N/96 zbioru,
+  N = 1 … 96) i `impl.txt` (~11 M) jako kolejne początki `core.txt` i `sets.json`. Na końcu
+  `check_chain11.py` zapisuje do `chain11_check.txt` i `READY` typy kolumn i liczniki łańcucha
+  dla jednego pliku z każdej pary (era, wersja); `DIFFERS` przy kolumnie znaczy, że TChain jej
+  nie przeczyta.
 - **Więcej danych:** większa lista na lxplus, `fetch_eos.sh` jeszcze raz, usunąć `local.csv`,
-  `sets.json` i `READY`, wysłać zadanie.
+  `sets.json`, `chain11_check.txt` i `READY`, wysłać zadanie.
+
+## Kampania Run 3 (Helios)
+
+Tylko łańcuch 11 filtrów (10 gałęzi), tylko pełne oryginalne pliki z `data3`, czytane z Lustre
+na zimno. Cztery osobne zadania `slurm_run3.sbatch`, każde na całym węźle, każde startuje po
+końcu poprzedniego (`afterany`), więc analizę skalowania można zaczynać po J1:
+
+| zadanie | co | katalog wyników |
+|---|---|---|
+| J1 | `strong11` na `core.txt`, 1–192 wątki, jeden bieg na punkt; najpierw próba 1 wątku na `impl.txt`, z niej `RUN_TIMEOUT` (3 × szacunek t1) | `results-helios-run3-chain11` |
+| J2 | `weak11`: `weak_N` na N wątkach, N = 1, 2, 4, 8, 16, 32, 48, 64, 96 | `results-helios-run3-chain11-weak` |
+| J3 | `node11`: RDF na 192 wątkach (kontrola) i `uproot-pool` na 192 procesach, cały zbiór | `results-helios-run3-node` |
+| J4 | `node11`: `python-pool` na 192 procesach, cały zbiór | `results-helios-run3-node` |
+
+```bash
+cd $SCRATCH/bench/nanoaod-pps-tools
+bash test/run3_helios.sh --dry-run        # podgląd
+bash test/run3_helios.sh                  # J1-J4
+bash test/run3_helios.sh --from J3        # od J3
+TIME_J1=24:00:00 bash test/run3_helios.sh --only J1
+```
+
+- **Pule (`bench_pool.py`):** uproot i AsNumpy nie zrównoleglają pętli i trzymają czytane
+  kolumny w pamięci, więc na całym węźle biegną tak, jak używa się ich w praktyce: N procesów,
+  jeden plik na zadanie, pliki od największego. Proces `uproot-pool` nie importuje ROOT-a.
+  `setup` to start procesów i import bibliotek (do bariery), `loop` to wszystkie pliki.
+  `cpu_loop` zawiera CPU procesów, `bytes_loop` i `io_*_loop` to ich sumy, a
+  `peak_rss_tree_kb` to szczyt sumy RSS rodzica i procesów z przebiegu `rss_*.csv` (próbnik
+  liczy całe drzewo procesów). Zabity proces (np. przez OOM) kończy bieg jako `failed`,
+  zamiast go zawiesić.
+- **Wykres 17** (`17_whole_node.png`): czas całkowity, CPU-h w pętli i szczytowy RSS wszystkich
+  procesów dla RDF / uproot / Python. `plot_results.py` sprawdza też, że wszystkie dają tę samą
+  liczbę zdarzeń.
+- **Wznawianie:** każde zadanie biegnie z `RESUME=1`, więc ponownie wysłane dokłada tylko to,
+  czego nie ma jako `ok`. `FRESH=1` odsuwa istniejący katalog wyników.
+- **Po każdym zadaniu:** skopiować katalog wyników do `results/run3/`, bo scratch jest czyszczony.
 
 ## Kampania
 
@@ -976,6 +1021,8 @@ T1 t0” różnicę między identycznymi biegami RDF z T5 i z T1.
 | `TESTS` | wszystkie / `strong weak qstruct size` dla `big` | które eksperymenty biegną; `strongchain` to sam T1 łańcucha 5 filtrów (bez t0) |
 | `CHAIN_ARGS` | — | dodatkowe argumenty `bench_chain.py` w `strongchain`, np. `--period 2016` |
 | `SIZE_SERIES` | `1 2 4 6 8 9` | liczby kopii w `size` i `sizepy` (tylko `big`) |
+| `NODE_IMPLS` / `NODE_THREADS` | `rdf-lazy uproot-pool python-pool` / `192` | test `node11`: implementacje i liczba wątków (RDF) albo procesów (pule) |
+| `EVENT_COUNTS` | — (w `slurm_run3.sbatch`: `data3/local.csv`) | CSV z `inventory_files.py`: liczba zdarzeń z niego zamiast otwierania każdego pliku w `setup` (~5 min na bieg przy 1453 plikach); gdy pliku w nim brak, pliki są otwierane jak dotąd |
 | `BIG_COPIES` / `IMPL_COPIES` | `96` / `9` | ile kopii `ds_N.root` ma `lists/core.txt` / `lists/impl.txt` (tylko `big`) |
 | `RESUME` | — | `1` dopisuje do `raw.jsonl` i pomija biegi, które są już `ok` |
 | `REPEATS_STRONG` / `_WEAK` / `_QSTRUCT` / `_IMPL` / `_SLIM` | `5` / `3` / `2` / `3` / `3` | powtórzenia (mediana, wąsy min–max) |

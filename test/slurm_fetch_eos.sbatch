@@ -15,14 +15,18 @@
 #
 #   1. check       every file in SIZES is here with its size -> local.txt
 #   2. inventory   inventory_files.py: entries, schema, codec, pps_fraction -> local.csv
-#      lists       make_filelists.py -> core.txt, weak_N.txt, impl.txt, sets.json
-#   3. READY       written last
+#      lists       make_filelists.py -> core.txt (interleaved by era/PD), weak_N.txt and
+#                  impl.txt as nested prefixes of it, sets.json
+#   3. chain11     check_chain11.py: column types and per-filter counts per era/version
+#                  -> chain11_check.txt
+#   4. READY       written last, with chain11_check.txt appended
 #
 #   tmux new -s run3; CERN_USER=<login> bash test/fetch_eos.sh   # on the login node, first
 #   sbatch test/slurm_fetch_eos.sbatch
 #
 # Each step is skipped when its output exists. With more files in SIZES (a larger selection on
-# lxplus), run fetch_eos.sh again and delete local.csv, sets.json and READY before submitting.
+# lxplus), run fetch_eos.sh again and delete local.csv, sets.json, chain11_check.txt and READY
+# before submitting.
 #
 # CMS data is not public: it stays on scratch, outside the repository.
 
@@ -50,6 +54,8 @@ OUT_DIR="${OUT_DIR:-${SCRATCH_BENCH}/data3}"
 SIZES="${SIZES:-run3_sizes.txt}"
 SCAN_JOBS="${SCAN_JOBS:-16}"
 MIN_PPS="${MIN_PPS:-0.01}"
+# weak_N holds N/96 of the set, so weak_96 at 96 threads is all of it.
+WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32 48 64 96}"
 cd "$OUT_DIR"
 
 stamp() { date +%H:%M:%S; }
@@ -86,10 +92,21 @@ if [[ ! -s sets.json ]]; then
     # core.txt is the whole set: the budget is the download's own, with a margin.
     core_gb="$(awk -v g="$total_gb" 'BEGIN { print g * 1.1 + 1 }')"
     "$PY" "$T/make_filelists.py" --inventory local.csv --any-schema --min-pps "$MIN_PPS" \
-        --core-gb "$core_gb" --core-events 1e12 --out-dir "$OUT_DIR"
+        --core-gb "$core_gb" --core-events 1e12 --out-dir "$OUT_DIR" \
+        --interleave --nested --weak-series "$WEAK_SERIES"
 fi
 
-echo "=== 3. READY [$(stamp)]"
+echo "=== 3. chain11 [$(stamp)]"
+if [[ ! -s chain11_check.txt ]]; then
+    check_status=0
+    "$PY" "$T/check_chain11.py" --inventory local.csv >chain11_check.txt.partial \
+        || check_status=$?
+    mv chain11_check.txt.partial chain11_check.txt
+    ((check_status == 0)) || echo "WARNING: check_chain11.py exited $check_status, see below" >&2
+fi
+cat chain11_check.txt
+
+echo "=== 4. READY [$(stamp)]"
 "$PY" - local.csv sets.json >READY.partial <<'PYEOF'
 import csv, json, sys
 
@@ -105,6 +122,7 @@ print(f"schemas {len(schemas)}: {' '.join(schemas)}")
 print(f"events with PPS {pps:.3f}  codec {' '.join(sorted({r['compression'] for r in rows}))}")
 print(f"core.txt: {core['files']} files, {core['events']} events, {core['gb']} GB")
 PYEOF
+{ echo; cat chain11_check.txt; } >>READY.partial
 mv READY.partial READY
 cat READY
 echo "done [$(stamp)]"

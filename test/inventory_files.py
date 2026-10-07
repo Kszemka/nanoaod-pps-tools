@@ -61,7 +61,8 @@ REMOTE = ("root://", "http://", "https://")
 
 
 def benchmark_columns():
-    return sorted(set(bc.chain_columns(bc.MAX_CHAIN_LEN)) | set(bc.EFFICIENCY_COLUMNS))
+    return sorted(set(bc.chain_columns(len(bc.LONG_CHAIN_STEPS), "long"))
+                  | set(bc.EFFICIENCY_COLUMNS))
 
 
 def read_list(list_path, prefix):

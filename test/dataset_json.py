@@ -10,7 +10,8 @@ ImplicitMT worker opens one file at a time, so it is one file's layout that it p
     dataset_json.py --out RESULTS --input ds_1.root
 
 --inventory (inventory_files.py output) adds the event and schema counts and the branch range
-over every file of the input, not only the sampled ones.
+over every file of the input, not only the sampled ones. It also samples each NanoAOD version
+of the input separately, and describes each one under by_version.
 """
 
 import argparse
@@ -18,6 +19,7 @@ import csv
 import json
 import os
 import sys
+from collections import defaultdict
 
 import bench_common as bc
 
@@ -34,26 +36,57 @@ def codec_name(algorithm, level):
     return f"{CODECS.get(int(algorithm), algorithm)}:{level}"
 
 
-def describe(input_path, inventory=None, sample=5):
-    files = list(dict.fromkeys(bc.input_files(input_path)))
+def spread(files, sample):
+    """Up to `sample` files evenly spaced through the list."""
     step = max(len(files) // sample, 1)
-    layouts = [bc.tree_layout(path) for path in files[::step][:sample]]
-    branches = sorted({len(layout["branches"]) for layout in layouts})
-    info = {
-        "files": len(bc.input_files(input_path)),
-        "distinct_files": len(files),
-        "branches": str(branches[0]) if len(branches) == 1 else f"{branches[0]}-{branches[-1]}",
+    return files[::step][:sample]
+
+
+def layout_summary(layouts):
+    return {
         "branches_median": median([len(layout["branches"]) for layout in layouts]),
         "clusters_per_file": median([layout["clusters"] for layout in layouts]),
         "baskets_per_file": median([layout["baskets"] for layout in layouts]),
         "codec": " ".join(sorted({codec_name(layout["compression_algorithm"],
                                              layout["compression_level"]) for layout in layouts})),
-        "sampled": len(layouts),
     }
+
+
+def describe(input_path, inventory=None, sample=5):
+    files = list(dict.fromkeys(bc.input_files(input_path)))
+    rows = []
     if inventory:
         names = {os.path.basename(path) for path in files}
         with open(inventory) as f:
             rows = [r for r in csv.DictReader(f) if r["name"] in names]
+    # A set that mixes NanoAOD versions (Run 3: v11, v12 and v15) differs in layout between
+    # them, so each version gets its own sample; an even spread over the list could miss one.
+    version_of = {r["name"]: r.get("version") or "" for r in rows}
+    by_version = defaultdict(list)
+    for path in files:
+        by_version[version_of.get(os.path.basename(path), "")].append(path)
+    sampled = {version: [bc.tree_layout(path) for path in spread(paths, sample)]
+               for version, paths in by_version.items()}
+    layouts = [layout for group in sampled.values() for layout in group]
+    branches = sorted({len(layout["branches"]) for layout in layouts})
+    info = {
+        "files": len(bc.input_files(input_path)),
+        "distinct_files": len(files),
+        "branches": str(branches[0]) if len(branches) == 1 else f"{branches[0]}-{branches[-1]}",
+        **layout_summary(layouts),
+        "sampled": len(layouts),
+    }
+    if len(sampled) > 1:
+        info["by_version"] = {}
+        for version, group in sorted(sampled.items()):
+            group_rows = [r for r in rows if (r.get("version") or "") == version]
+            info["by_version"][version or "unknown"] = dict(
+                layout_summary(group),
+                files=len(by_version[version]),
+                events=sum(int(r["entries"]) for r in group_rows),
+                sampled=len(group),
+            )
+    if inventory:
         counts = sorted({int(r["n_branches"]) for r in rows})
         info["events"] = sum(int(r["entries"]) for r in rows)
         info["schemas"] = len({r["schema"] for r in rows})

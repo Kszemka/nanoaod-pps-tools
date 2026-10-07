@@ -28,6 +28,7 @@ CSV_FIELDS = [
     "peak_rss_net_kb", "time_maxrss_kb", "cpu_percent", "elapsed_s", "cpu_loop",
     "cores_busy_loop", "events_per_s", "tracks_per_s", "event_loops", "exit_code", "timeout_s",
     "pinned_core", "cpus_allowed", "os_threads", "root_version", "uproot_version", "node",
+    "workers", "cpu_loop_workers", "peak_rss_tree_kb",
 ]
 
 
@@ -312,7 +313,7 @@ def measured_serial_fraction(records):
     return fixed / total if total else None
 
 
-def plot_core(ok, results_dir, plt, save, outputs):
+def plot_core(ok, results_dir, plt, save, outputs, records_all=()):
     """
     The core campaign: strong scaling, weak scaling, query structure, implementations, and
     the file-width experiment.
@@ -774,6 +775,94 @@ def plot_core(ok, results_dir, plt, save, outputs):
     if sized:
         plot_input_size(sized, plt, save)
 
+    # (17) The whole node on the whole input, RDataFrame against the process pools.
+    node = [r for r in records_all if re.match(r"r\d+_node_", str(r.get("label", "")))]
+    if node:
+        plot_whole_node(node, plt, save)
+
+
+NODE_IMPL_LABEL = {"rdf-lazy": "RDataFrame\n(ImplicitMT)", "uproot-pool": "uproot\n(process pool)",
+                   "python-pool": "Python (AsNumpy)\n(process pool)"}
+NODE_IMPL_COLOUR = {"rdf-lazy": "#1b7837", "uproot-pool": "#762a83", "python-pool": "#e08214"}
+
+
+def plot_whole_node(records, plt, save):
+    """
+    Time, CPU and memory of each implementation given the whole node and the whole input.
+
+    Total time rather than the loop alone: the pools pay for starting their processes, as
+    RDataFrame pays for its JIT, and a user waits for both. Memory is the whole process tree's,
+    since the pools hold their data in the workers. A run that failed keeps its place on the
+    axis, marked, rather than leaving a gap that reads as "not measured".
+    """
+    parsed = []
+    for r in records:
+        match = re.match(r"r\d+_node_\w+?_(rdf-lazy|uproot-pool|python-pool)_t(\d+)$",
+                         str(r.get("label", "")))
+        if match:
+            parsed.append((match.group(1), int(match.group(2)), r))
+    if not parsed:
+        return
+    impls = [i for i in NODE_IMPL_LABEL if any(p[0] == i for p in parsed)]
+    threads = sorted({p[1] for p in parsed})
+    width = 0.8 / len(threads)
+
+    def value(r, field):
+        if field == "wall_total":
+            return total_seconds(r) / 60 if total_seconds(r) else None
+        if field == "cpu_h":
+            return r["cpu_loop"] / 3600 if r.get("cpu_loop") is not None else None
+        rss = r.get("peak_rss_tree_kb") or r.get("time_maxrss_kb") or r.get("peak_rss_kb")
+        return rss * 1024 / 1e9 if rss else None
+
+    panels = (("wall_total", "total time [min]"), ("cpu_h", "CPU in the event loop [core-h]"),
+              ("rss", "peak RSS, all processes [GB]"))
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4.8))
+    answers = {}
+    for ax, (field, ylabel) in zip(axes, panels):
+        for k, n in enumerate(threads):
+            for i, impl in enumerate(impls):
+                runs = [r for p_impl, p_n, r in parsed if p_impl == impl and p_n == n]
+                ok_values = [value(r, field) for r in runs if r.get("status") == "ok"]
+                ok_values = [v for v in ok_values if v is not None]
+                x = i + (k - (len(threads) - 1) / 2) * width
+                if ok_values:
+                    height = median(ok_values)
+                    ax.bar(x, height, width * 0.9, color=NODE_IMPL_COLOUR[impl],
+                           alpha=1.0 if k == len(threads) - 1 else 0.6)
+                    ax.text(x, height, f"{height:.3g}", ha="center", va="bottom", fontsize=8)
+                elif runs:
+                    ax.text(x, 0, "failed", ha="center", va="bottom", fontsize=8,
+                            color="#b2182b", rotation=90)
+                for r in runs:
+                    passed = (r.get("checksums") or {}).get("events_passed")
+                    if r.get("status") == "ok" and passed is not None:
+                        answers[(impl, n)] = passed
+        ax.set_xticks(range(len(impls)))
+        ax.set_xticklabels([NODE_IMPL_LABEL[i] for i in impls], fontsize=8)
+        ax.set_ylabel(ylabel)
+        ax.set_ylim(bottom=0)
+        ax.grid(alpha=0.3, axis="y")
+    for ax in axes:
+        ax.margins(y=0.12)
+    if len(set(answers.values())) > 1:
+        print(f"  WARNING: whole-node runs disagree on events passed: {answers}")
+    elif answers:
+        print(f"  whole node: every implementation passes {next(iter(answers.values()))} events")
+    for impl, n in sorted(answers):
+        runs = [r for p_impl, p_n, r in parsed if p_impl == impl and p_n == n
+                and r.get("status") == "ok"]
+        total = median([v for v in (value(r, "wall_total") for r in runs) if v is not None])
+        rss = median([v for v in (value(r, "rss") for r in runs) if v is not None])
+        print(f"  whole node {impl} x{n}: total "
+              f"{'n/a' if total is None else f'{total:.1f} min'}, "
+              f"{'n/a' if rss is None else f'{rss:.1f} GB'} peak")
+    events = next((r.get("n_events") for _, _, r in parsed if r.get("n_events")), None)
+    suffix = f", {events / 1e6:.0f} M events" if events else ""
+    fig.suptitle(f"Whole node, whole input: {', '.join(map(str, threads))} "
+                 f"threads or processes{suffix}")
+    save(fig, "17_whole_node.png")
+
 
 SIZE_IMPL_LABEL = {"rdf": "RDataFrame", "rdf-lazy": "RDataFrame", "jit": "RDataFrame",
                    "uproot": "uproot", "python": "Python (AsNumpy)"}
@@ -859,7 +948,7 @@ def plot(records, results_dir):
         plt.close(fig)
         outputs.append(path)
 
-    plot_core(ok, results_dir, plt, save, outputs)
+    plot_core(ok, results_dir, plt, save, outputs, records)
     return outputs
 
 

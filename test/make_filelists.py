@@ -20,6 +20,9 @@ Two uses:
        impl.txt       T4 and T5: ~--impl-events, so the Python paths stay within ~20 min
        sets.json      events, clusters and GB of every list, and the weak series' deviation
                       from its target -- real files come in uneven sizes
+     --interleave orders the files so that every prefix has the whole set's era/PD mix, and
+     --nested makes weak_N and impl prefixes of core.txt, each one inside the next: with both,
+     a weak point differs from its neighbours in size alone, not in which data it holds.
 
 Paths inside --out-dir are written relative to it, so the lists move with the data.
 """
@@ -116,6 +119,40 @@ def closest_subset(files, target, tolerance=0.02):
     return sorted(chosen, key=lambda r: r["path"])
 
 
+def interleave(files):
+    """
+    Files of every (era, primary dataset) spread evenly through the list, by events.
+
+    Each file sits at the middle of its share of its group's events, as a fraction of the
+    group, and the list is sorted on that. Every prefix then holds each group in its overall
+    proportion, so a weak-scaling point at 4 threads reads the same mix of 2023 and 2024,
+    Muon0 and Muon1, as the one at 96.
+    """
+    groups = defaultdict(list)
+    for row in sorted(files, key=lambda r: r["path"]):
+        groups[(row.get("era"), row.get("primary_dataset"))].append(row)
+    keyed = []
+    for key, rows in groups.items():
+        total, before = sum(r["entries"] for r in rows) or 1, 0
+        for row in rows:
+            keyed.append(((before + row["entries"] / 2) / total, str(key), row))
+            before += row["entries"]
+    return [row for _, _, row in sorted(keyed, key=lambda k: (k[0], k[1]))]
+
+
+def closest_prefix(files, target):
+    """The prefix of files whose event count is closest to target, at least one file."""
+    best, best_gap, total = 1, None, 0
+    for count, row in enumerate(files, 1):
+        total += row["entries"]
+        gap = abs(total - target)
+        if best_gap is None or gap < best_gap:
+            best, best_gap = count, gap
+        if total > target:
+            break
+    return files[:best]
+
+
 def describe(files):
     return {
         "files": len(files),
@@ -158,12 +195,19 @@ def main():
                         help="page-cache budget: 192 GB node, ~12 GB RSS at 48 threads")
     parser.add_argument("--impl-events", type=float, default=11.1e6)
     parser.add_argument("--weak-series", default="1 2 4 8 16 32 48")
+    parser.add_argument("--interleave", action="store_true",
+                        help="order core.txt so that every prefix has the same era/PD mix")
+    parser.add_argument("--nested", action="store_true",
+                        help="weak_N.txt and impl.txt as prefixes of core.txt, each containing "
+                             "the smaller ones, instead of greedy subsets")
     args = parser.parse_args()
 
     files, schema = eligible(load(args.inventory), args)
     if not files:
         print("ERROR: no eligible files (check --run, --version, --min-pps)", file=sys.stderr)
         return 1
+    if args.interleave:
+        files = interleave(files)
     summary = describe(files)
     print(f"eligible: {summary['files']} files, {summary['events']} events, "
           f"{summary['gb']} GB, schema {schema}")
@@ -201,11 +245,14 @@ def main():
 
     series = [int(n) for n in args.weak_series.split()]
     unit = events / max(series)
-    sets = {"schema": schema, "core": describe(core), "weak": {}, "impl": None}
+    subset_of = closest_prefix if args.nested else closest_subset
+    sets = {"schema": schema, "core": describe(core), "weak": {}, "impl": None,
+            "order": "interleaved" if args.interleave else "path",
+            "subsets": "prefixes" if args.nested else "closest"}
     write_list(os.path.join(out_dir, "core.txt"), core, out_dir)
 
     for n in series:
-        subset = closest_subset(core, n * unit)
+        subset = subset_of(core, n * unit)
         info = describe(subset)
         info["target_events"] = round(n * unit)
         info["deviation"] = round(info["events"] / (n * unit) - 1, 4)
@@ -213,7 +260,7 @@ def main():
         sets["weak"][n] = info
         write_list(os.path.join(out_dir, f"weak_{n}.txt"), subset, out_dir)
 
-    impl = closest_subset(core, min(args.impl_events, events))
+    impl = subset_of(core, min(args.impl_events, events))
     sets["impl"] = describe(impl)
     write_list(os.path.join(out_dir, "impl.txt"), impl, out_dir)
 

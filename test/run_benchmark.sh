@@ -21,6 +21,9 @@
 #   T2S weak on slim     T2 again on slim copies of the weak inputs
 #   size / sizepy        T5 against input size (DATASET=big only): RDataFrame and uproot, and
 #                        separately Python, pinned to one core on 1..9 copies (~11-98 GB)
+#   node11               the 11-filter chain on the whole node and the whole core input:
+#                        RDataFrame on NODE_THREADS threads, uproot and Python in a pool of
+#                        NODE_THREADS processes (bench_pool.py)
 #
 # T3 is memory and has no runs of its own: every run writes an RSS trace and a peak.
 # T1 and T6 include t0, ImplicitMT off, so speedup can be quoted against the fastest serial
@@ -116,9 +119,12 @@ ONLY_USED="${ONLY_USED:-}"
 #   weakslim  T2S T2 again on the 6-column copies
 #   size      T5's RDataFrame and uproot runs on each point of SIZE_SERIES (DATASET=big)
 #   sizepy    T5's Python runs on the same points, smallest first (DATASET=big)
-#   strong11  T1 for the 11-filter chain alone (bench_chain --chain long), on the slim set
-#             whose files hold just its 10 branches (DATASET=big, DATA_DIR=<slim set>)
+#   strong11  T1 for the 11-filter chain alone (bench_chain --chain long): on the slim set
+#             whose files hold just its 10 branches (DATASET=big, DATA_DIR=<slim set>), or on
+#             full real files (DATASET=real, the Run 3 campaign)
 #   weak11    T2 for the same chain on the same set
+#   node11    RDataFrame, uproot and Python on the whole core input, each with the whole node
+#             (NODE_IMPLS x NODE_THREADS)
 #   strongchain  T1 for the 5-filter chain alone, no t0, with $CHAIN_ARGS: the comparison of
 #             the real Open Data set against the artificial one (slurm_real_vs_synthetic.sbatch)
 TESTS="${TESTS:-strong weak qstruct impl slim weakslim}"
@@ -132,9 +138,15 @@ has_test() {
 for requested in $TESTS; do
     case "$requested" in
         strong|weak|qstruct|impl|slim|weakslim|strongchain) ;;
-        size|sizepy|strong11|weak11)
+        size|sizepy)
             if [[ "$DATASET" != big ]]; then
                 echo "ERROR: TESTS=$requested needs DATASET=big (the ds_N.root copies)." >&2
+                exit 1
+            fi
+            ;;
+        strong11|weak11|node11)
+            if [[ "$DATASET" == synthetic ]]; then
+                echo "ERROR: TESTS=$requested needs DATASET=big or DATASET=real." >&2
                 exit 1
             fi
             ;;
@@ -144,10 +156,21 @@ done
 
 # The slim set holds only the 11-filter chain's branches, so nothing else can run on it: the
 # 5-filter chain and the filter would, but they are measured on the full files, and the
-# efficiency column's x/y are not there at all.
+# efficiency column's x/y are not there at all. A Run 3 campaign of the chain alone skips the
+# other warm-ups for the same reason it skips the other tests.
 ONLY_CHAIN11=1
 for requested in $TESTS; do
-    [[ "$requested" == strong11 || "$requested" == weak11 ]] || ONLY_CHAIN11=""
+    [[ "$requested" == strong11 || "$requested" == weak11 || "$requested" == node11 ]] \
+        || ONLY_CHAIN11=""
+done
+# node11: what runs, and with how many threads (RDataFrame) or processes (the pools).
+NODE_IMPLS="${NODE_IMPLS:-rdf-lazy uproot-pool python-pool}"
+NODE_THREADS="${NODE_THREADS:-192}"
+for impl in $NODE_IMPLS; do
+    case "$impl" in
+        rdf-lazy|uproot-pool|python-pool) ;;
+        *) echo "ERROR: NODE_IMPLS: unknown implementation '$impl'." >&2; exit 1 ;;
+    esac
 done
 # T1 for the long chain: no t0 (its ImplicitMT(1) penalty is measured on the full files) and no
 # t2, which on 1 TB costs half a t1. STRONG11_R2_THREADS are measured a second time, after the
@@ -580,7 +603,7 @@ if [[ "$WARMUP_RUNS" -eq 1 ]]; then
         run_one "warmup_chain_rdf-lazy" bench_chain.py --input "$WARMUP_INPUT_SET" --impl rdf-lazy
         run_one "warmup_eff_jit" bench_efficiency.py --input "$WARMUP_INPUT_SET" --impl jit
     fi
-    if has_test strong11 || has_test weak11; then
+    if has_test strong11 || has_test weak11 || has_test node11; then
         run_one "warmup_chain11_rdf-lazy" bench_chain.py --input "$WARMUP_INPUT_SET" \
             --impl rdf-lazy --chain long
     fi
@@ -633,6 +656,24 @@ done
 for n in $WEAK11_R3_SERIES; do
     run_one "r3_weak_chain11_rdf-lazy_t${n}" bench_chain.py \
         --input "$(weak_input "$n")" --impl rdf-lazy --chain long --threads "$n"
+done
+fi
+
+# The whole core input, the whole node, each implementation the way it uses a node: ImplicitMT
+# threads for RDataFrame, a pool of single-threaded processes over the files for uproot and
+# Python. The rdf-lazy run repeats a strong11 point, as a control taken next to the pools.
+if has_test node11; then
+echo "=== whole node, 11-filter chain, on $(basename "$DS_CORE"): $NODE_IMPLS x $NODE_THREADS ==="
+for impl in $NODE_IMPLS; do
+    for threads in $NODE_THREADS; do
+        if [[ "$impl" == rdf-lazy ]]; then
+            run_one "r1_node_chain11_${impl}_t${threads}" bench_chain.py \
+                --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
+        else
+            run_one "r1_node_chain11_${impl}_t${threads}" bench_pool.py \
+                --input "$DS_CORE" --impl "$impl" --chain long --threads "$threads"
+        fi
+    done
 done
 fi
 
