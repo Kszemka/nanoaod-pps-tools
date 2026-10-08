@@ -8,6 +8,7 @@ the worker processes of bench_pool.py: an uproot worker that imported ROOT only 
 chain would carry ~0.3 GB it never uses, 192 times over, and charge it to uproot.
 """
 
+import operator
 import os
 import sys
 
@@ -47,16 +48,39 @@ CHAIN_COLUMNS = {
 MAX_CHAIN_LEN = len(CHAIN_STEPS)
 EFFICIENCY_COLUMNS = ["PPSLocalTrack_x", "PPSLocalTrack_y", "PPSLocalTrack_decRPId"]
 XI_RANGE = (0.05, 0.1)
-# The detector-dependent parameters of the chain, per data-taking period. "2023" is the
-# notebook's analysis on the Tier0 replay (and the ds_xN copies of it): pots 23|123 and 3|103,
-# diamond timing detectors, RP 22. In 2016 PPS ran with strip detectors only, in pots 2, 3,
-# 102 and 103, so there the 2023 chain rejects every event at double_arm. The 2016 variant
-# keeps the same five steps over the same columns with that year's pots and detector type.
+# The detector-dependent parameters of the chain, per data-taking period. "2026" is the
+# notebook's analysis on examples/test.root (run 396727) and the ds_xN copies of it: pots
+# 23|123 and 3|103, diamond timing detectors, RP 22. In 2016 PPS ran with strip detectors only,
+# in pots 2, 3, 102 and 103, so there the 2026 chain rejects every event at double_arm. The
+# 2016 variant keeps the same five steps over the same columns with that year's pots and
+# detector type. Its track cuts cannot be the 2026 ones either: every strip track belongs to a
+# single-RP proton and none carries timing (time 0), so "single_rp_idx == -1" and "time != 0"
+# drop every event. They keep the multi-RP cut and turn the other three around; on
+# 2A2D52E2-CD96-BD4C-8D60-4BC274FA8ED5.root (2016) the chain then keeps 5.3% of the events.
+#
+# "run3" is the 2024-2026 data set: in its files (e.g. run 401844) the diamonds hold tracks in
+# under 0.5% of events and multi-RP protons in 3%, so every cut that needs either drops almost
+# all of it. The chain there selects on the pixels (rpType 4, RP 23), and its four track cuts
+# are turned around: a track not used by a multi-RP proton, a track used by a single-RP one, a
+# track without timing (pixel tracks carry time 0). On run 401844 it keeps 60% of the events.
+#
+# track_cuts: (operator, value) of the "any track with <column> <op> <value>" steps; the
+# operator is written into the RDataFrame expression and looked up in TRACK_OPS for the arrays.
+TRACK_OPS = {"==": operator.eq, "!=": operator.ne, ">=": operator.ge, "<=": operator.le,
+             ">": operator.gt, "<": operator.lt}
+TRACK_CUTS = {"multi_rp_idx": (">=", 0), "single_rp_idx": ("==", -1),
+              "time": ("!=", 0), "time_unc": ("!=", 0)}
 PERIODS = {
-    "2023": {"arms": ((23, 123), (3, 103)), "detector": "diamond", "rp_type": 5, "rp_id": 22},
-    "2016": {"arms": ((2, 3), (102, 103)), "detector": "strip", "rp_type": 3, "rp_id": 3},
+    "2026": {"arms": ((23, 123), (3, 103)), "detector": "diamond", "rp_type": 5, "rp_id": 22,
+             "track_cuts": TRACK_CUTS},
+    "2016": {"arms": ((2, 3), (102, 103)), "detector": "strip", "rp_type": 3, "rp_id": 3,
+             "track_cuts": {"multi_rp_idx": (">=", 0), "single_rp_idx": (">=", 0),
+                            "time": ("==", 0), "time_unc": ("==", 0)}},
+    "run3": {"arms": ((23, 123), (3, 103)), "detector": "pixel", "rp_type": 4, "rp_id": 23,
+             "track_cuts": {"multi_rp_idx": ("==", -1), "single_rp_idx": (">=", 0),
+                            "time": ("==", 0), "time_unc": ("==", 0)}},
 }
-DEFAULT_PERIOD = "2023"
+DEFAULT_PERIOD = "2026"
 
 
 def chain_steps(chain_len, chain="base"):

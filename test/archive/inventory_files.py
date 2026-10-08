@@ -26,7 +26,7 @@ Per file:
                --compare inventory_lxplus.csv
 
 The list may also hold remote URLs (root://, https://), e.g. the CERN Open Data files from
-opendata_index.py: each file is then opened over the network and only its metadata and the two
+archive/opendata_index.py: each file is then opened over the network and only its metadata and the two
 PPS branches are read, a few percent of its size. --jobs N describes N files at a time.
 
   Open Data: python test/inventory_files.py --list scan.txt --output remote.csv --jobs 8
@@ -55,7 +55,7 @@ STORE_PATH = re.compile(
     r"/(?P<era>[^/]+)/(?P<pd>[^/]+)/NANOAOD/(?P<version>[^/]+)/000/(?P<r1>\d{3})/(?P<r2>\d{3})/"
 )
 # /eos/opendata/cms/Run2016H/SingleMuon/NANOAOD/UL2016_MiniAODv2_NanoAODv9-v1/120000/<uuid>.root,
-# and the same below any download directory that keeps <era>/<PD>/ (fetch_opendata.sh).
+# and the same below any download directory that keeps <era>/<PD>/ (archive/fetch_opendata.sh).
 OPENDATA_PATH = re.compile(r"/(?P<era>Run\d{4}[A-Z])/(?P<pd>[^/]+)/(?:NANOAOD/(?P<version>[^/]+)/)?")
 REMOTE = ("root://", "http://", "https://")
 

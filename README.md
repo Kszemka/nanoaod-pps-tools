@@ -546,12 +546,13 @@ nanoaod-pps-tools/
 │   └── diamond_alignment_coords_2025.json
 ├── test/                         # Benchmark suite
 │   ├── README.md                    # What is measured and how to run it
+│   ├── run3_helios.sh               # Submits the Run 3 campaign (slurm_run3.sbatch) on Helios
 │   ├── run_all.sh                   # Validation + campaign
 │   ├── run_benchmark.sh             # Campaign driver
 │   ├── make_slim.py                 # 6-branch copy of the T1 input for the file-width test
-│   ├── inventory_files.py           # Per-file CSV (events, clusters, schema, PPS); transfer check
-│   ├── make_filelists.py            # Real-data file lists from the inventory
-│   ├── slurm_benchmark.sbatch       # Ares job
+│   ├── make_bigset.sh               # ~1 TB of ds_x32.root copies for DATASET=big
+│   ├── slurm_benchmark.sbatch       # Whole-node job, Ares or Helios
+│   ├── archive/                     # Data fetching and finished campaigns, not run any more
 │   ├── bench_*.py                   # Individual benchmarks
 │   ├── impl_*.py                    # RDataFrame, uproot and numpy implementations
 │   ├── validate.py                  # Cross-checks the implementations agree

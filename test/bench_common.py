@@ -34,7 +34,7 @@ SCHEMA_VERSION = 3
 from bench_spec import (  # noqa: F401 -- re-exported, the benchmarks use bc.<name>
     CHAIN_COLUMNS, CHAIN_STEPS, CHAINS, DEFAULT_ARM, DEFAULT_PERIOD, DEFAULT_POT,
     DEFAULT_RP_ID, EFFICIENCY_COLUMNS, LONG_CHAIN_STEPS, MAX_CHAIN_LEN, PERIODS, REPO_ROOT,
-    XI_RANGE, chain_columns, chain_steps, input_files, is_file_list,
+    TRACK_CUTS, TRACK_OPS, XI_RANGE, chain_columns, chain_steps, input_files, is_file_list,
 )
 
 import ROOT  # noqa: E402
@@ -56,7 +56,7 @@ def build_parser(description, impls, modes=("vector", "loop")):
     parser.add_argument("--period", default=DEFAULT_PERIOD, choices=sorted(PERIODS),
                         help="detector configuration the chain's cuts are written for")
     parser.add_argument("--rp-id", type=int, default=None,
-                        help="default: the period's RP (22 for 2023, 3 for 2016)")
+                        help="default: the period's RP (22 for 2026, 23 for run3, 3 for 2016)")
     parser.add_argument("--arm", default=DEFAULT_ARM)
     parser.add_argument("--pot-type", default=DEFAULT_POT, choices=["box", "cyl"])
     parser.add_argument("--tag", default="", help="free-form label copied into the output record")
@@ -143,7 +143,7 @@ def count_events(args, tree="Events"):
     A Count() action would be an entire event loop -- on a 14 M event file that was ~150 s per
     run, spent purely on bookkeeping and charged to the setup phase. Opening each file is not
     free either: ~0.2 s for a ~2000-branch NanoAOD on Lustre, ~5 min per run over the 1453 Run 3
-    files. With $EVENT_COUNTS (an inventory_files.py CSV) the counts come from there, and the
+    files. With $EVENT_COUNTS (an archive/inventory_files.py CSV) the counts come from there, and the
     files are opened only if one of them is not in it.
     """
     files = input_files(args.input)

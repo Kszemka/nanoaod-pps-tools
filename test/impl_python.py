@@ -82,16 +82,16 @@ def _step_mask(name, column, rp_id, period=bc.DEFAULT_PERIOD):
         return _any_in(column, [bc.PERIODS[period]["rp_type"]])
     if name == "rp_id":
         return _any_in(column, [rp_id])
-    if name == "single_rp_idx":
-        return _any_in(column, [-1])
+    track_cuts = bc.PERIODS[period]["track_cuts"]
+    if name in track_cuts:
+        op, value = track_cuts[name]
+        return _any_where(column, lambda e: bc.TRACK_OPS[op](e, value))
     if name == "multi_proton":
         return np.asarray(column) > 1
     if name == "xi":
         lo, hi = bc.XI_RANGE
         return _any_where(column, lambda e: (e >= lo) & (e <= hi))
-    if name == "multi_rp_idx":
-        return _any_where(column, lambda e: e >= 0)
-    # time, time_unc, theta_y
+    # theta_y
     return _any_where(column, lambda e: e != 0)
 
 

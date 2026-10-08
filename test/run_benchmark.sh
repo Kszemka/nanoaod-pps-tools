@@ -4,7 +4,7 @@
 # $RESULTS/raw.jsonl, then draws the plots. Two datasets, same experiments:
 #
 #   DATASET=synthetic (default)  the ds_x1..ds_x32 series: N copies of examples/test.root
-#   DATASET=real                 Tier0 NanoAOD as .txt file lists from make_filelists.py
+#   DATASET=real                 Tier0 NanoAOD as .txt file lists from archive/make_filelists.py
 #   DATASET=big                  ~1 TB: ds_1..ds_96.root, plain copies of ds_x32.root from
 #                                make_bigset.sh, one repeat each, read cold (COLD=1); T1/T2 on
 #                                up to 1 TB, T4 on ~100 GB and the size series (TESTS)
@@ -126,10 +126,12 @@ ONLY_USED="${ONLY_USED:-}"
 #   node11    RDataFrame, uproot and Python on the whole core input, each with the whole node
 #             (NODE_IMPLS x NODE_THREADS)
 #   strongchain  T1 for the 5-filter chain alone, no t0, with $CHAIN_ARGS: the comparison of
-#             the real Open Data set against the artificial one (slurm_real_vs_synthetic.sbatch)
+#             the real Open Data set against the artificial one (archive/slurm_real_vs_synthetic.sbatch)
 TESTS="${TESTS:-strong weak qstruct impl slim weakslim}"
-# Extra bench_chain.py arguments for strongchain, e.g. "--period 2016" on Run 2 data.
+# Extra bench_chain.py arguments for strongchain, strong11, weak11, node11 and the chain11
+# warm-up, e.g. "--period 2016" on Run 2 data.
 CHAIN_ARGS="${CHAIN_ARGS:-}"
+read -r -a chain_args <<< "$CHAIN_ARGS"
 
 # has_test <name>
 has_test() {
@@ -166,6 +168,7 @@ done
 # node11: what runs, and with how many threads (RDataFrame) or processes (the pools).
 NODE_IMPLS="${NODE_IMPLS:-rdf-lazy uproot-pool python-pool}"
 NODE_THREADS="${NODE_THREADS:-192}"
+REPEATS_NODE="${REPEATS_NODE:-1}"
 for impl in $NODE_IMPLS; do
     case "$impl" in
         rdf-lazy|uproot-pool|python-pool) ;;
@@ -207,7 +210,7 @@ case "$DATASET" in
         # ~11 M events, the size of ds_x32: the Python chain alone is ~20 min there.
         DS_IMPL="${DS_IMPL:-$DATA_DIR/impl.txt}"
         DS_SLIM="${DS_SLIM:-$DATA_DIR/core_slim.txt}"
-        # make_filelists.py sizes weak_N to N x (core events / 48); sets.json has the deviations.
+        # archive/make_filelists.py sizes weak_N to N x (core events / 48); sets.json has the deviations.
         WEAK_PATTERN="${WEAK_PATTERN:-weak_%s.txt}"
         # weak_N lists are subsets of core, so their slim files already exist in slim/.
         WEAK_SLIM_PATTERN="${WEAK_SLIM_PATTERN:-weak_%s_slim.txt}"
@@ -605,29 +608,33 @@ if [[ "$WARMUP_RUNS" -eq 1 ]]; then
     fi
     if has_test strong11 || has_test weak11 || has_test node11; then
         run_one "warmup_chain11_rdf-lazy" bench_chain.py --input "$WARMUP_INPUT_SET" \
-            --impl rdf-lazy --chain long
+            --impl rdf-lazy --chain long ${chain_args[@]+"${chain_args[@]}"}
     fi
 fi
 
 # T1 and T2 for the 11-filter chain on the slim set. Labelled strong_/weak_ like T1 and T2, so
 # the figures pick them up; the test field (chain11) keeps them apart from the 5-filter chain.
 if has_test strong11; then
-echo "=== T1 strong scaling, 11-filter chain, on $(basename "$DS_CORE"): $STRONG11_THREADS ==="
+echo "=== T1 strong scaling, 11-filter chain ${CHAIN_ARGS:+($CHAIN_ARGS) }on $(basename "$DS_CORE"): $STRONG11_THREADS ==="
 for threads in $STRONG11_THREADS; do
     run_one "r1_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
-        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
+        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads" \
+        ${chain_args[@]+"${chain_args[@]}"}
 done
 for threads in $STRONG11_R2_THREADS; do
     run_one "r2_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
-        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
+        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads" \
+        ${chain_args[@]+"${chain_args[@]}"}
 done
 for threads in $STRONG11_R3_THREADS; do
     run_one "r3_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
-        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
+        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads" \
+        ${chain_args[@]+"${chain_args[@]}"}
 done
 for threads in $STRONG11_R4_THREADS; do
     run_one "r4_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
-        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
+        --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads" \
+        ${chain_args[@]+"${chain_args[@]}"}
 done
 read -r -a extra_threads <<< "$STRONG11_EXTRA_THREADS"
 sweep=0
@@ -639,7 +646,8 @@ for repeat in $STRONG11_EXTRA_REPEATS; do
             threads="${extra_threads[k]}"
         fi
         run_one "r${repeat}_strong_chain11_rdf-lazy_t${threads}" bench_chain.py \
-            --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
+            --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads" \
+            ${chain_args[@]+"${chain_args[@]}"}
     done
     sweep=$((sweep + 1))
 done
@@ -650,29 +658,36 @@ echo "=== T2 weak scaling, 11-filter chain: $WEAK_PATTERN on N threads ==="
 for repeat in $(seq 1 "$REPEATS_WEAK"); do
     for n in $WEAK_SERIES; do
         run_one "r${repeat}_weak_chain11_rdf-lazy_t${n}" bench_chain.py \
-            --input "$(weak_input "$n")" --impl rdf-lazy --chain long --threads "$n"
+            --input "$(weak_input "$n")" --impl rdf-lazy --chain long --threads "$n" \
+            ${chain_args[@]+"${chain_args[@]}"}
     done
 done
 for n in $WEAK11_R3_SERIES; do
     run_one "r3_weak_chain11_rdf-lazy_t${n}" bench_chain.py \
-        --input "$(weak_input "$n")" --impl rdf-lazy --chain long --threads "$n"
+        --input "$(weak_input "$n")" --impl rdf-lazy --chain long --threads "$n" \
+        ${chain_args[@]+"${chain_args[@]}"}
 done
 fi
 
 # The whole core input, the whole node, each implementation the way it uses a node: ImplicitMT
 # threads for RDataFrame, a pool of single-threaded processes over the files for uproot and
 # Python. The rdf-lazy run repeats a strong11 point, as a control taken next to the pools.
+# Repeats are the outer loop, so a slow stretch of Lustre lands on every implementation once.
 if has_test node11; then
-echo "=== whole node, 11-filter chain, on $(basename "$DS_CORE"): $NODE_IMPLS x $NODE_THREADS ==="
-for impl in $NODE_IMPLS; do
-    for threads in $NODE_THREADS; do
-        if [[ "$impl" == rdf-lazy ]]; then
-            run_one "r1_node_chain11_${impl}_t${threads}" bench_chain.py \
-                --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads"
-        else
-            run_one "r1_node_chain11_${impl}_t${threads}" bench_pool.py \
-                --input "$DS_CORE" --impl "$impl" --chain long --threads "$threads"
-        fi
+echo "=== whole node, 11-filter chain, on $(basename "$DS_CORE"): $NODE_IMPLS x $NODE_THREADS, $REPEATS_NODE repeat(s) ==="
+for repeat in $(seq 1 "$REPEATS_NODE"); do
+    for impl in $NODE_IMPLS; do
+        for threads in $NODE_THREADS; do
+            if [[ "$impl" == rdf-lazy ]]; then
+                run_one "r${repeat}_node_chain11_${impl}_t${threads}" bench_chain.py \
+                    --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads" \
+                    ${chain_args[@]+"${chain_args[@]}"}
+            else
+                run_one "r${repeat}_node_chain11_${impl}_t${threads}" bench_pool.py \
+                    --input "$DS_CORE" --impl "$impl" --chain long --threads "$threads" \
+                    ${chain_args[@]+"${chain_args[@]}"}
+            fi
+        done
     done
 done
 fi
@@ -696,7 +711,6 @@ fi
 # T1 for the chain alone, labelled like T1's chain runs so the same plots read it. No t0: the
 # ImplicitMT(1) penalty is already measured on the artificial set.
 if has_test strongchain; then
-    read -r -a chain_args <<< "$CHAIN_ARGS"
     echo "=== T1 strong scaling, 5-filter chain ${CHAIN_ARGS:+($CHAIN_ARGS) }on $(basename "$DS_CORE") ==="
     for repeat in $(seq 1 "$REPEATS_STRONG"); do
         for threads in $THREADS_LIST; do

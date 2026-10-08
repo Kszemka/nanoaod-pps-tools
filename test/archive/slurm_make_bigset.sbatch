@@ -12,7 +12,7 @@
 
 # The artificial 1 TB set as a job of its own: make_bigset.sh writes ds_1.root .. ds_96.root
 # next to $SCRATCH/bench/data/ds_x32.root. Runs alongside the Open Data download (both are
-# small, non-exclusive jobs); test/opendata_helios.sh queues the benchmark after both.
+# small, non-exclusive jobs); test/archive/opendata_helios.sh queued the benchmark after both.
 #
 #   sbatch test/slurm_make_bigset.sbatch
 #   sbatch --export=ALL,COPY_JOBS=16 test/slurm_make_bigset.sbatch

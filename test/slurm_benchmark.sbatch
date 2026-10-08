@@ -182,6 +182,15 @@ if [[ -z "${RESUME:-}" && -f "${RESULTS}/raw.jsonl" ]]; then
     mv "${RESULTS}" "${previous}"
 fi
 
+# DATASET_JSON_INPUT (a list or a file) writes $RESULTS/dataset.json, which the plots and
+# plot_real_vs_synthetic.py read the codec, branches and baskets of the set from;
+# DATASET_JSON_INVENTORY adds the event and schema counts over every file.
+if [[ -n "${DATASET_JSON_INPUT:-}" && ! -f "${RESULTS}/dataset.json" ]]; then
+    mkdir -p "${RESULTS}"
+    "$PY" test/dataset_json.py --out "${RESULTS}" --input "${DATASET_JSON_INPUT}" \
+        ${DATASET_JSON_INVENTORY:+--inventory "${DATASET_JSON_INVENTORY}"}
+fi
+
 # No srun. Since Slurm 22.05 a job step does not inherit --cpus-per-task from the batch
 # allocation, so `srun` here could hand the whole campaign a single CPU -- which fails
 # silently, as a flat speedup curve. The batch script already runs inside a cgroup covering

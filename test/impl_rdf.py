@@ -25,23 +25,24 @@ from app.apply_corrections import apply_diamond_efficiency_jit
 def chain_filters(rp_id=bc.DEFAULT_RP_ID, period=bc.DEFAULT_PERIOD):
     left, right = bc.PERIODS[period]["arms"]
     detector = bc.PERIODS[period]["detector"]
+    track_cuts = bc.PERIODS[period]["track_cuts"]
+
+    def track_cut(name):
+        column = bc.CHAIN_COLUMNS[name]
+        op, value = track_cuts[name]
+        return lambda df: df.Filter(f"ROOT::VecOps::Any({column} {op} {value})",
+                                    f"Events with a track with {column} {op} {value}")
+
     return {
         "pps": lambda df: df.Filter("nPPSLocalTrack > 0", "Events with PPS data"),
         "double_arm": lambda df: filter_double_arm_events(df, left, right),
         "diamond": lambda df: filter_detector_type(df, detector),
         "rp_id": lambda df: filter_detector_specific_events(df, rp_id),
         "xi": lambda df: filter_xi_ranged_events(df, *bc.XI_RANGE),
-        "multi_rp_idx": lambda df: df.Filter(
-            "ROOT::VecOps::Any(PPSLocalTrack_multiRPProtonIdx >= 0)",
-            "Events with a track used by a multi-RP proton"),
-        "single_rp_idx": lambda df: df.Filter(
-            "ROOT::VecOps::Any(PPSLocalTrack_singleRPProtonIdx == -1)",
-            "Events with a track not used by a single-RP proton"),
-        "time": lambda df: df.Filter(
-            "ROOT::VecOps::Any(PPSLocalTrack_time != 0)", "Events with a timed track"),
-        "time_unc": lambda df: df.Filter(
-            "ROOT::VecOps::Any(PPSLocalTrack_timeUnc != 0)",
-            "Events with a track time uncertainty"),
+        "multi_rp_idx": track_cut("multi_rp_idx"),
+        "single_rp_idx": track_cut("single_rp_idx"),
+        "time": track_cut("time"),
+        "time_unc": track_cut("time_unc"),
         "theta_y": lambda df: df.Filter(
             "ROOT::VecOps::Any(Proton_singleRP_thetaY != 0)",
             "Events with a single-RP proton thetaY"),

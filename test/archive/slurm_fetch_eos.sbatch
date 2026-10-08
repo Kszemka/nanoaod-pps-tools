@@ -15,18 +15,19 @@
 #
 #   1. check       every file in SIZES is here with its size -> local.txt
 #   2. inventory   inventory_files.py: entries, schema, codec, pps_fraction -> local.csv
-#      lists       make_filelists.py -> core.txt (interleaved by era/PD), weak_N.txt and
-#                  impl.txt as nested prefixes of it, sets.json
-#   3. chain11     check_chain11.py: column types and per-filter counts per era/version
-#                  -> chain11_check.txt
-#   4. READY       written last, with chain11_check.txt appended
+#   3. chain11     check_chain11.py on every file: column types, per-filter counts per
+#                  era/version -> chain11_check.txt, per file -> chain11_files.csv
+#   4. lists       make_filelists.py -> core.txt (interleaved by era/PD), weak_N.txt and
+#                  impl.txt as nested prefixes of it, sets.json; files with fewer than
+#                  MIN_PASSED events left after the chain are left out
+#   5. READY       written last, with chain11_check.txt appended
 #
 #   tmux new -s run3; CERN_USER=<login> bash test/fetch_eos.sh   # on the login node, first
 #   sbatch test/slurm_fetch_eos.sbatch
 #
 # Each step is skipped when its output exists. With more files in SIZES (a larger selection on
-# lxplus), run fetch_eos.sh again and delete local.csv, sets.json, chain11_check.txt and READY
-# before submitting.
+# lxplus), run fetch_eos.sh again and delete local.csv, chain11_check.txt, chain11_files.csv,
+# sets.json and READY before submitting.
 #
 # CMS data is not public: it stays on scratch, outside the repository.
 
@@ -54,6 +55,7 @@ OUT_DIR="${OUT_DIR:-${SCRATCH_BENCH}/data3}"
 SIZES="${SIZES:-run3_sizes.txt}"
 SCAN_JOBS="${SCAN_JOBS:-16}"
 MIN_PPS="${MIN_PPS:-0.01}"
+MIN_PASSED="${MIN_PASSED:-1}"
 # weak_N holds N/96 of the set, so weak_96 at 96 threads is all of it.
 WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32 48 64 96}"
 cd "$OUT_DIR"
@@ -82,31 +84,34 @@ awk -v d="$OUT_DIR" '{ sub("^/eos/cms/store/", "", $1); print d "/" $1 }' "$SIZE
 total_gb="$(awk '{ s += $2 } END { printf "%.1f", s / 1e9 }' "$SIZES")"
 echo "  all $(wc -l <local.txt) files have the size from $SIZES: $total_gb GB"
 
-echo "=== 2. inventory and lists [$(stamp)]"
+echo "=== 2. inventory [$(stamp)]"
 if [[ ! -s local.csv ]]; then
     "$PY" "$T/inventory_files.py" --list local.txt --output local.csv.partial \
         --jobs "$SCAN_JOBS" --threads 1
     mv local.csv.partial local.csv
 fi
-if [[ ! -s sets.json ]]; then
-    # core.txt is the whole set: the budget is the download's own, with a margin.
-    core_gb="$(awk -v g="$total_gb" 'BEGIN { print g * 1.1 + 1 }')"
-    "$PY" "$T/make_filelists.py" --inventory local.csv --any-schema --min-pps "$MIN_PPS" \
-        --core-gb "$core_gb" --core-events 1e12 --out-dir "$OUT_DIR" \
-        --interleave --nested --weak-series "$WEAK_SERIES"
-fi
 
 echo "=== 3. chain11 [$(stamp)]"
-if [[ ! -s chain11_check.txt ]]; then
+if [[ ! -s chain11_check.txt || ! -s chain11_files.csv ]]; then
     check_status=0
-    "$PY" "$T/check_chain11.py" --inventory local.csv >chain11_check.txt.partial \
-        || check_status=$?
+    "$PY" "$T/check_chain11.py" --inventory local.csv --jobs "$SCAN_JOBS" \
+        --per-file chain11_files.csv >chain11_check.txt.partial || check_status=$?
     mv chain11_check.txt.partial chain11_check.txt
     ((check_status == 0)) || echo "WARNING: check_chain11.py exited $check_status, see below" >&2
 fi
 cat chain11_check.txt
 
-echo "=== 4. READY [$(stamp)]"
+echo "=== 4. lists [$(stamp)]"
+if [[ ! -s sets.json ]]; then
+    # core.txt is the whole set: the budget is the download's own, with a margin.
+    core_gb="$(awk -v g="$total_gb" 'BEGIN { print g * 1.1 + 1 }')"
+    "$PY" "$T/make_filelists.py" --inventory local.csv --any-schema --min-pps "$MIN_PPS" \
+        --chain-counts chain11_files.csv --min-passed "$MIN_PASSED" \
+        --core-gb "$core_gb" --core-events 1e12 --out-dir "$OUT_DIR" \
+        --interleave --nested --weak-series "$WEAK_SERIES"
+fi
+
+echo "=== 5. READY [$(stamp)]"
 "$PY" - local.csv sets.json >READY.partial <<'PYEOF'
 import csv, json, sys
 

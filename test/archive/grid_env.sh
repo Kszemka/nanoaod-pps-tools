@@ -20,7 +20,7 @@
 #
 # X509_USER_PROXY defaults to ~/.x509up_cms: home is shared with the compute nodes, /tmp is not.
 # The proxy itself is made by hand (voms-proxy-init asks for the key's passphrase); see
-# slurm_fetch_das.sbatch. Nothing here reads ~/.globus or the proxy.
+# archive/slurm_fetch_das.sbatch. Nothing here reads ~/.globus or the proxy.
 
 _grid_bench="${SCRATCH:+$SCRATCH/bench}"
 _grid_bench="${_grid_bench:-$HOME/bench}"

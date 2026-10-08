@@ -3,7 +3,8 @@
 Builds the benchmark's file lists from an inventory_files.py CSV.
 
 Eligible files: readable, every benchmark column present, PPS in at least --min-pps of the
-events, optionally one run and one processing version, and then one schema -- the one with the
+events, with --chain-counts at least --min-passed events left after the 11-filter chain,
+optionally one run and one processing version, and then one schema -- the one with the
 most events, unless --schema names another. Mixing schemas in a TChain works only as long as
 no branch that differs is read, which is not a property worth resting a benchmark on.
 
@@ -11,7 +12,7 @@ Two uses:
 
   1. Before the transfer, on the lxplus inventory: --transfer-list writes the selected paths
      relative to --strip-prefix, ready for `rsync -R --files-from`. On a remote inventory of
-     CERN Open Data, with --max-gb and --era-order, it writes the URLs fetch_opendata.sh takes.
+     CERN Open Data, with --max-gb and --era-order, it writes the URLs archive/fetch_opendata.sh takes.
      Open Data files differ in schema (HLT menus change between runs), so --any-schema keeps
      them all; the benchmark columns are checked in every file regardless.
   2. After it, on the Ares inventory: writes into --out-dir
@@ -48,8 +49,15 @@ def load(path):
     return rows
 
 
+def load_passed(path):
+    """check_chain11.py --per-file CSV -> {absolute path: events left after the chain}."""
+    with open(path) as f:
+        return {os.path.abspath(r["path"]): int(r["passed"]) if r.get("passed") else None
+                for r in csv.DictReader(f)}
+
+
 def eligible(rows, args):
-    out = []
+    out, dropped = [], []
     for row in rows:
         if row.get("missing_columns"):
             continue
@@ -59,7 +67,14 @@ def eligible(rows, args):
             continue
         if args.version and row.get("version") != args.version:
             continue
+        if args.passed is not None and (args.passed.get(os.path.abspath(row["path"])) or 0) \
+                < args.min_passed:
+            dropped.append(row)
+            continue
         out.append(row)
+    if dropped:
+        print(f"left out: {len(dropped)} files, {sum(r['entries'] for r in dropped)} events, "
+              f"with fewer than {args.min_passed} events left after the chain")
     if not out:
         return [], None
     events_by_schema = defaultdict(int)
@@ -182,6 +197,10 @@ def main():
                         help="keep every schema; safe as long as the benchmark columns are in all")
     parser.add_argument("--min-pps", type=float, default=0.01,
                         help="minimum fraction of events with nPPSLocalTrack > 0")
+    parser.add_argument("--chain-counts",
+                        help="check_chain11.py --per-file CSV: leave out files with fewer than "
+                             "--min-passed events left after the chain, or not in it")
+    parser.add_argument("--min-passed", type=int, default=1)
     parser.add_argument("--transfer-list", help="write the selected paths here and stop")
     parser.add_argument("--strip-prefix", default="",
                         help="with --transfer-list: removed from the front of every path")
@@ -201,6 +220,7 @@ def main():
                         help="weak_N.txt and impl.txt as prefixes of core.txt, each containing "
                              "the smaller ones, instead of greedy subsets")
     args = parser.parse_args()
+    args.passed = load_passed(args.chain_counts) if args.chain_counts else None
 
     files, schema = eligible(load(args.inventory), args)
     if not files:

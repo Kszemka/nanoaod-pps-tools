@@ -97,13 +97,13 @@ def _step_mask(name, data, rp_id, period=bc.DEFAULT_PERIOD):
     if name == "xi":
         lo, hi = bc.XI_RANGE
         return ak.to_numpy(ak.any((column >= lo) & (column <= hi), axis=1))
-    if name == "multi_rp_idx":
-        return ak.to_numpy(ak.any(column >= 0, axis=1))
-    if name == "single_rp_idx":
-        return ak.to_numpy(ak.any(column == -1, axis=1))
+    track_cuts = bc.PERIODS[period]["track_cuts"]
+    if name in track_cuts:
+        op, value = track_cuts[name]
+        return ak.to_numpy(ak.any(bc.TRACK_OPS[op](column, value), axis=1))
     if name == "multi_proton":
         return ak.to_numpy(column) > 1
-    # time, time_unc, theta_y
+    # theta_y
     return ak.to_numpy(ak.any(column != 0, axis=1))
 
 
