@@ -4,11 +4,14 @@ Strong scaling of one chain on several ~1 TB sets, on the same machine: one figu
 of full-width files, one table for all of them.
 
     plot_real_vs_synthetic.py --out results/comparison \
-        --set "results/full-chain11/artificial-1tb:chain11:artificial, full files" \
         --set "results/full-chain11/run2-1tb:chain11:Run 2 Open Data" \
         --set "results/run3/chain11:chain11:Run 3" \
         --set "results/synthetic-slim:chain11:artificial, slim files" \
-        --figure "artificial, full files" --figure "Run 2 Open Data" --figure "Run 3"
+        --figure "Run 2 Open Data" --figure "Run 3" --best-of "Run 2 Open Data"
+
+The artificial full files (96 copies of one ds_x32) are left out: their 5 million baskets per
+file make the memory per thread a property of the copies rather than of production files, and
+they serve instead as the memory control against the slim set (plot_memory_control.py).
 
 --set DIR:TEST:LABEL is a results directory, the test field of its strong sweep (chain11 for
 the 11-filter chain, chain for the 5-filter one) and the name the set goes by; a directory
@@ -16,6 +19,12 @@ without raw.jsonl or without that sweep is skipped with a warning, so sets still
 can stay on the command line. --figure LABEL puts a set in the figure (every set without any
 --figure). The figure's sets are full-width files of which the chain reads a few percent; the
 slim set, which the chain reads whole, belongs in the table as the reference.
+
+--best-of LABEL takes a set's loop time at each thread count as the fastest of its repeats
+instead of their median, for a set whose repeats were slowed down from outside by different
+amounts (e.g. Run 2 measured while a download was writing to the same Lustre). The min-max band
+stays, the table marks the set, and sets_summary.csv says which statistic each row uses
+(loop_stat). Thread counts run once are the same either way.
 
 Writes into --out:
   full_files_chain11.png  loop time, speedup against one thread and peak RSS against the thread
@@ -54,7 +63,8 @@ EFFICIENCY_AT = 96
 FIELDS = ["set", "test", "events", "input_tb", "codec", "branches", "baskets_per_file",
           "read_gb", "read_pct", "loop_s_t1", "loop_min_s", "threads_at_min", "max_speedup",
           "plateau_threads", "efficiency_96", "mb_per_thread", "gb_per_s_at_min",
-          "events_passed"]
+          "events_passed", "loop_stat"]
+BEST_MARK = "*"
 
 
 def parse_set(text):
@@ -64,8 +74,8 @@ def parse_set(text):
     return parts
 
 
-def sweep(results_dir, test):
-    """Per thread count: median loop time, median peak RSS and the runs themselves."""
+def sweep(results_dir, test, best=False):
+    """Per thread count: median (best: fastest) loop time, median peak RSS and the runs."""
     records, _ = dedupe_labels(load_records(results_dir))
     flag_disturbed(records)
     ok = [r for r in records if r.get("status") == "ok"]
@@ -80,7 +90,7 @@ def sweep(results_dir, test):
         rss = [r["peak_rss_kb"] / 1024 ** 2 for r in group if r.get("peak_rss_kb")]
         points.append({
             "threads": n,
-            "loop": median([r["wall_loop"] for r in group]),
+            "loop": (min if best else median)([r["wall_loop"] for r in group]),
             "loop_lo": min(r["wall_loop"] for r in group),
             "loop_hi": max(r["wall_loop"] for r in group),
             "rss_gb": median(rss) if rss else None,
@@ -102,7 +112,7 @@ def dataset_info(results_dir):
         return json.load(f)
 
 
-def summarise(name, test, points, info):
+def summarise(name, test, points, info, fastest_of_repeats=False):
     first = points[0]
     one = first["runs"] if first["threads"] == 1 else []
     best = min(points, key=lambda p: p["loop"])
@@ -137,6 +147,7 @@ def summarise(name, test, points, info):
         "gb_per_s_at_min": read_best / best["loop"] / 1e9 if read_best is not None else None,
         # More than one value would mean the thread count changed the answer.
         "events_passed": " ".join(str(v) for v in passed),
+        "loop_stat": "best" if fastest_of_repeats else "median",
     }
 
 
@@ -176,12 +187,18 @@ def cell(row, key, spec):
     return fmt(value, spec)
 
 
+def set_name(row):
+    return row["set"] + (BEST_MARK if row["loop_stat"] == "best" else "")
+
+
 def print_table(rows):
-    print(f"{'':>9s}  " + "  ".join(f"{row['set'][:22]:>22s}" for row in rows))
+    print(f"{'':>9s}  " + "  ".join(f"{set_name(row)[:22]:>22s}" for row in rows))
     for head, _, key, spec in TABLE:
         print(f"{head:>9s}  " + "  ".join(f"{cell(row, key, spec):>22s}" for row in rows))
     print("  T = event-loop time; S = T(1)/T(n); E = S/n; read at 1 thread; "
           "MB/thr = slope of a straight line through peak RSS")
+    if any(row["loop_stat"] == "best" for row in rows):
+        print(f"  {BEST_MARK} T = fastest of the repeats at each thread count, not their median")
 
 
 def write_csv(rows, path):
@@ -200,17 +217,23 @@ def latex_escape(text):
 
 def write_tex(rows, path):
     lines = [r"\begin{tabular}{l" + "r" * len(rows) + "}", r"\toprule",
-             " & ".join([""] + [latex_escape(row["set"]) for row in rows]) + r" \\",
+             " & ".join([""] + [latex_escape(row["set"])
+                                + (f"$^{BEST_MARK}$" if row["loop_stat"] == "best" else "")
+                                for row in rows]) + r" \\",
              r"\midrule"]
     for _, title, key, spec in TABLE:
         cells = [latex_escape(cell(row, key, spec)).replace(",", "\\,") for row in rows]
         lines.append(" & ".join([title] + cells) + r" \\")
-    lines += [r"\bottomrule", r"\end{tabular}"]
+    lines.append(r"\bottomrule")
+    if any(row["loop_stat"] == "best" for row in rows):
+        lines.append(rf"\multicolumn{{{len(rows) + 1}}}{{l}}{{\footnotesize ${BEST_MARK}$ loop "
+                     r"times: fastest of the repeats at each thread count, not their median.} \\")
+    lines.append(r"\end{tabular}")
     with open(path, "w") as f:
         f.write("\n".join(lines) + "\n")
 
 
-def plot(sets, tests, path):
+def plot(sets, tests, path, best=()):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -220,12 +243,13 @@ def plot(sets, tests, path):
     for (name, points), base in zip(sets.items(), STYLES * len(sets)):
         style = dict(base, ls="-")
         xs = [p["threads"] for p in points]
+        timed = name + (" (fastest of repeats)" if name in best else "")
         ax_t.errorbar(xs, [p["loop"] for p in points],
                       yerr=[[p["loop"] - p["loop_lo"] for p in points],
                             [p["loop_hi"] - p["loop"] for p in points]],
-                      capsize=3, label=name, **style)
+                      capsize=3, label=timed, **style)
         if points[0]["threads"] == 1:
-            ax_s.plot(xs, [points[0]["loop"] / p["loop"] for p in points], label=name, **style)
+            ax_s.plot(xs, [points[0]["loop"] / p["loop"] for p in points], label=timed, **style)
         with_rss = [p for p in points if p["rss_gb"]]
         if with_rss:
             ax_m.errorbar([p["threads"] for p in with_rss], [p["rss_gb"] for p in with_rss],
@@ -269,25 +293,29 @@ def main():
                         metavar="DIR:TEST:LABEL", help="a results directory (repeatable)")
     parser.add_argument("--figure", action="append", default=[], metavar="LABEL",
                         help="a set to draw (repeatable; default: every set)")
+    parser.add_argument("--best-of", action="append", default=[], metavar="LABEL",
+                        help="a set timed by the fastest of its repeats (repeatable)")
     parser.add_argument("--out", default=".", help="directory for the figure and the tables")
     args = parser.parse_args()
 
     labels = [label for _, _, label in args.sets]
-    unknown = [label for label in args.figure if label not in labels]
-    if unknown:
-        print(f"ERROR: --figure {', '.join(unknown)} is not the label of any --set",
-              file=sys.stderr)
-        return 1
+    for option, given in (("--figure", args.figure), ("--best-of", args.best_of)):
+        unknown = [label for label in given if label not in labels]
+        if unknown:
+            print(f"ERROR: {option} {', '.join(unknown)} is not the label of any --set",
+                  file=sys.stderr)
+            return 1
 
     sets, tests, rows = {}, {}, []
     for results_dir, test, label in args.sets:
-        points = sweep(results_dir, test) if os.path.isdir(results_dir) else []
+        best = label in args.best_of
+        points = sweep(results_dir, test, best) if os.path.isdir(results_dir) else []
         if not points:
             print(f"WARNING: skipping '{label}': no {test} strong sweep (r<N>_strong_*) in "
                   f"{results_dir}", file=sys.stderr)
             continue
         sets[label], tests[label] = points, test
-        rows.append(summarise(label, test, points, dataset_info(results_dir)))
+        rows.append(summarise(label, test, points, dataset_info(results_dir), best))
     if not rows:
         print("ERROR: no set with a strong sweep", file=sys.stderr)
         return 1
@@ -309,7 +337,7 @@ def main():
         print("matplotlib not installed -- tables written, figure skipped", file=sys.stderr)
         return 0
     png_path = os.path.join(args.out, "full_files_chain11.png")
-    plot(drawn, [tests[label] for label in drawn], png_path)
+    plot(drawn, [tests[label] for label in drawn], png_path, set(args.best_of))
     print(f"  {png_path}")
     return 0
 

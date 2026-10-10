@@ -34,7 +34,10 @@ git mv test/archive/opendata_helios.sh test/archive/slurm_fetch_opendata.sbatch 
 | `slurm_fetch_eos.sbatch` | Run 3 z EOS | po `fetch_eos.sh`: rozmiary, inwentaryzacja, łańcuch na każdym pliku, listy (przeplecione, zagnieżdżone), `READY` |
 | `inventory_files.py` | Tier0, Run 3 | CSV z opisem plików: zdarzenia, klastry, schemat, kodek, obecność PPS; sprawdza transfer (`data3/local.csv`, z którego `slurm_run3.sbatch` bierze liczby zdarzeń) |
 | `make_filelists.py` | Tier0, Run 3 | z inwentaryzacji buduje listy `core.txt`, `weak_N.txt`, `impl.txt` i `sets.json` dla `DATASET=real` |
-| `slurm_make_bigset.sbatch` | Open Data, H1–H4 | `make_bigset.sh` (zostaje w `test/`) jako osobne zadanie Slurm |
+| `make_bigset.sh` | Open Data, H1–H4, pełne pliki | kopie `ds_1.root` … `ds_96.root` z `ds_x32.root`, wejście `DATASET=big` |
+| `slurm_make_bigset.sbatch` | Open Data, H1–H4 | `make_bigset.sh` jako osobne zadanie Slurm |
+| `make_slim.py` | T6, slim11 | kopia wejścia z samymi gałęziami testów (`--columns chain11`: 10 gałęzi łańcucha); z `PYTHONPATH=test`, `run_benchmark.sh` woła ją sam dla T6 i T2S |
+| `run3_helios.sh` | Run 3 J1–J4 | osobne zadania Run 3 na `plgrid` (`slurm_run3.sbatch`); ostateczna kampania puszcza J1, J3 i J4 z `slurm_final.sbatch` |
 | `merge_results.py` | Helios H1–H4 | łączy dwie kampanie w jeden katalog, przesuwając numery powtórzeń drugiej (`results/archive/chain5/helios-full/full-1tb`) |
 | `plot_optimum.py` | Helios H1–H4, Open Data | optimum liczby wątków względem rozmiaru wejścia, z kilku katalogów wyników (wykres 14, `results/archive/chain5/layout/`; w pracy już go nie ma) |
 | `plot_memory_layout.py` | pamięć | pamięć na wątek względem układu pliku (gałęzie, koszyki), dopasowanie modelu (wykres 16); importuje `plot_optimum.py` |

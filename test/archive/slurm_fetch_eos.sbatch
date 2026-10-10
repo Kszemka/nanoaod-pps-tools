@@ -5,7 +5,7 @@
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=16
-#SBATCH --mem=16G
+#SBATCH --mem=96G
 #SBATCH --time=06:00:00
 #SBATCH --output=fetch-eos-%j.out
 #SBATCH --error=fetch-eos-%j.err
@@ -18,12 +18,13 @@
 #   3. chain11     check_chain11.py on every file: column types, per-filter counts per
 #                  era/version -> chain11_check.txt, per file -> chain11_files.csv
 #   4. lists       make_filelists.py -> core.txt (interleaved by era/PD), weak_N.txt and
-#                  impl.txt as nested prefixes of it, sets.json; files with fewer than
-#                  MIN_PASSED events left after the chain are left out
+#                  impl.txt as nested prefixes of it, sets.json; every readable file with
+#                  the chain's columns, as an analysis would take the whole list (MIN_PPS,
+#                  MIN_PASSED > 0 would leave out files with little PPS or nothing after the chain)
 #   5. READY       written last, with chain11_check.txt appended
 #
-#   tmux new -s run3; CERN_USER=<login> bash test/fetch_eos.sh   # on the login node, first
-#   sbatch test/slurm_fetch_eos.sbatch
+#   tmux new -s run3; CERN_USER=<login> bash test/archive/fetch_eos.sh   # on the login node, first
+#   sbatch test/archive/slurm_fetch_eos.sbatch
 #
 # Each step is skipped when its output exists. With more files in SIZES (a larger selection on
 # lxplus), run fetch_eos.sh again and delete local.csv, chain11_check.txt, chain11_files.csv,
@@ -38,7 +39,7 @@ if [[ -n "${SLURM_JOB_ID:-}" ]]; then
     # sbatch runs a copy of this file from the spool directory, so its own path says nothing.
     REPO="${REPO:-${SCRATCH_BENCH}/nanoaod-pps-tools}"
 else
-    REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+    REPO="${REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 fi
 if [[ -z "${PY:-}" ]]; then
     export MAMBA_ROOT_PREFIX="${SCRATCH_BENCH}/micromamba"
@@ -54,8 +55,10 @@ T="$REPO/test"
 OUT_DIR="${OUT_DIR:-${SCRATCH_BENCH}/data3}"
 SIZES="${SIZES:-run3_sizes.txt}"
 SCAN_JOBS="${SCAN_JOBS:-16}"
-MIN_PPS="${MIN_PPS:-0.01}"
-MIN_PASSED="${MIN_PASSED:-1}"
+MIN_PPS="${MIN_PPS:-0}"
+MIN_PASSED="${MIN_PASSED:-0}"
+# The cuts the benchmark measures, for the per-era flow in READY (and MIN_PASSED, if set).
+CHAIN_PERIOD="${CHAIN_PERIOD:-run3}"
 # weak_N holds N/96 of the set, so weak_96 at 96 threads is all of it.
 WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32 48 64 96}"
 cd "$OUT_DIR"
@@ -86,15 +89,18 @@ echo "  all $(wc -l <local.txt) files have the size from $SIZES: $total_gb GB"
 
 echo "=== 2. inventory [$(stamp)]"
 if [[ ! -s local.csv ]]; then
-    "$PY" "$T/inventory_files.py" --list local.txt --output local.csv.partial \
-        --jobs "$SCAN_JOBS" --threads 1
+    # pps_fraction takes an event loop over every file; only MIN_PPS needs it.
+    loop_args=()
+    [[ "$MIN_PPS" == 0 ]] && loop_args=(--no-loop)
+    PYTHONPATH="$T" "$PY" "$T/archive/inventory_files.py" --list local.txt --output local.csv.partial \
+        --jobs "$SCAN_JOBS" --threads 1 ${loop_args[@]+"${loop_args[@]}"}
     mv local.csv.partial local.csv
 fi
 
 echo "=== 3. chain11 [$(stamp)]"
 if [[ ! -s chain11_check.txt || ! -s chain11_files.csv ]]; then
     check_status=0
-    "$PY" "$T/check_chain11.py" --inventory local.csv --jobs "$SCAN_JOBS" \
+    "$PY" "$T/check_chain11.py" --inventory local.csv --period "$CHAIN_PERIOD" --jobs "$SCAN_JOBS" \
         --per-file chain11_files.csv >chain11_check.txt.partial || check_status=$?
     mv chain11_check.txt.partial chain11_check.txt
     ((check_status == 0)) || echo "WARNING: check_chain11.py exited $check_status, see below" >&2
@@ -105,7 +111,7 @@ echo "=== 4. lists [$(stamp)]"
 if [[ ! -s sets.json ]]; then
     # core.txt is the whole set: the budget is the download's own, with a margin.
     core_gb="$(awk -v g="$total_gb" 'BEGIN { print g * 1.1 + 1 }')"
-    "$PY" "$T/make_filelists.py" --inventory local.csv --any-schema --min-pps "$MIN_PPS" \
+    "$PY" "$T/archive/make_filelists.py" --inventory local.csv --any-schema --min-pps "$MIN_PPS" \
         --chain-counts chain11_files.csv --min-passed "$MIN_PASSED" \
         --core-gb "$core_gb" --core-events 1e12 --out-dir "$OUT_DIR" \
         --interleave --nested --weak-series "$WEAK_SERIES"

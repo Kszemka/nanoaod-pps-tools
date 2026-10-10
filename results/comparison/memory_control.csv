@@ -1,0 +1,5 @@
+set,statistic,mb_per_thread,intercept_mb,threads,points,rms_mb
+"artificial, full files",peak,168.864,4291.45,1-192,17,2528.57
+"artificial, full files",end,140.729,3565.59,1-192,17,1923.95
+"artificial, full files","end, open trees on 96 files",156.535,582.597,1-192,17,213.052
+"artificial, slim files",peak,16.1419,497.382,1-192,17,43.6906

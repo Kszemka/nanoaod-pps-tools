@@ -34,15 +34,12 @@ def chain_filters(rp_id=bc.DEFAULT_RP_ID, period=bc.DEFAULT_PERIOD):
                                     f"Events with a track with {column} {op} {value}")
 
     return {
+        **{name: track_cut(name) for name in track_cuts},
         "pps": lambda df: df.Filter("nPPSLocalTrack > 0", "Events with PPS data"),
         "double_arm": lambda df: filter_double_arm_events(df, left, right),
         "diamond": lambda df: filter_detector_type(df, detector),
         "rp_id": lambda df: filter_detector_specific_events(df, rp_id),
         "xi": lambda df: filter_xi_ranged_events(df, *bc.XI_RANGE),
-        "multi_rp_idx": track_cut("multi_rp_idx"),
-        "single_rp_idx": track_cut("single_rp_idx"),
-        "time": track_cut("time"),
-        "time_unc": track_cut("time_unc"),
         "theta_y": lambda df: df.Filter(
             "ROOT::VecOps::Any(Proton_singleRP_thetaY != 0)",
             "Events with a single-RP proton thetaY"),

@@ -53,14 +53,19 @@ def bytes_read():
     return _bytes_read
 
 
-def _read(path, columns, tree="Events"):
-    """Columns from one file or a .txt list of them, concatenated in list order."""
+def _read(path, columns, tree="Events", entry_start=None, entry_stop=None):
+    """
+    Columns from one file or a .txt list of them, concatenated in list order. entry_start and
+    entry_stop limit every file to that range of its entries.
+    """
     global _bytes_read
     parts = []
     for file_path in bc.input_files(path):
         with uproot.open(file_path) as handle:
             parts.append(handle[tree].arrays(
                 columns,
+                entry_start=entry_start,
+                entry_stop=entry_stop,
                 library="ak",
                 decompression_executor=_SERIAL,
                 interpretation_executor=_SERIAL,
@@ -107,8 +112,10 @@ def _step_mask(name, data, rp_id, period=bc.DEFAULT_PERIOD):
     return ak.to_numpy(ak.any(column != 0, axis=1))
 
 
-def chain_uproot(path, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base", period=bc.DEFAULT_PERIOD):
-    data = _read(path, bc.chain_columns(chain_len, chain))
+def chain_uproot(path, chain_len, rp_id=bc.DEFAULT_RP_ID, chain="base", period=bc.DEFAULT_PERIOD,
+                 entry_start=None, entry_stop=None):
+    data = _read(path, bc.chain_columns(chain_len, chain), entry_start=entry_start,
+                 entry_stop=entry_stop)
     n_events = len(data)
     counts = [n_events]
 

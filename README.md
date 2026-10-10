@@ -544,14 +544,15 @@ nanoaod-pps-tools/
 │   ├── pps_analysis.ipynb           # Interactive walkthrough
 │   ├── efficiency.json              # Diamond efficiency payload
 │   └── diamond_alignment_coords_2025.json
-├── test/                         # Benchmark suite
+├── test/                         # Benchmark suite: the files of the final campaign
 │   ├── README.md                    # What is measured and how to run it
-│   ├── run3_helios.sh               # Submits the Run 3 campaign (slurm_run3.sbatch) on Helios
+│   ├── FINAL.md                     # The final campaign: its files, steps and command
+│   ├── slurm_final.sbatch           # The final campaign as one Helios job
+│   ├── slurm_run3.sbatch            # Run 3 steps (J1, J3, J4) of it
+│   ├── slurm_benchmark.sbatch       # Whole-node job, Ares or Helios (step R)
 │   ├── run_all.sh                   # Validation + campaign
 │   ├── run_benchmark.sh             # Campaign driver
-│   ├── make_slim.py                 # 6-branch copy of the T1 input for the file-width test
-│   ├── make_bigset.sh               # ~1 TB of ds_x32.root copies for DATASET=big
-│   ├── slurm_benchmark.sbatch       # Whole-node job, Ares or Helios
+│   ├── check_chain11.py             # The chain on every file of a set, before measuring it
 │   ├── archive/                     # Data fetching and finished campaigns, not run any more
 │   ├── bench_*.py                   # Individual benchmarks
 │   ├── impl_*.py                    # RDataFrame, uproot and numpy implementations

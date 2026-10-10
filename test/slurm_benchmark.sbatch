@@ -41,7 +41,7 @@
 # DATASET=big is ~1 TB of plain copies of ds_x32.root, ds_1..ds_96.root in the same directory.
 # Make them once, on the login node and before the first such job (tens of minutes that an
 # exclusive node should not spend on `cp`):
-#   bash test/make_bigset.sh --source $SCRATCH/bench/data/ds_x32.root
+#   bash test/archive/make_bigset.sh --source $SCRATCH/bench/data/ds_x32.root
 # One repeat per point, cold reads throughout so each run pays for its own I/O. Two jobs:
 #   A  (~3.5 h, 99 runs)  T1 and T2 on up to 1 TB, T4 on ~100 GB, and the size series
 #                         (~11-98 GB, one core) for RDataFrame and uproot;

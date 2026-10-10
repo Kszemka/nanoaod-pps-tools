@@ -34,7 +34,8 @@ SCHEMA_VERSION = 3
 from bench_spec import (  # noqa: F401 -- re-exported, the benchmarks use bc.<name>
     CHAIN_COLUMNS, CHAIN_STEPS, CHAINS, DEFAULT_ARM, DEFAULT_PERIOD, DEFAULT_POT,
     DEFAULT_RP_ID, EFFICIENCY_COLUMNS, LONG_CHAIN_STEPS, MAX_CHAIN_LEN, PERIODS, REPO_ROOT,
-    TRACK_CUTS, TRACK_OPS, XI_RANGE, chain_columns, chain_steps, input_files, is_file_list,
+    TRACK_CUTS, TRACK_OPS, XI_RANGE, chain_columns, chain_cuts, chain_steps, input_files,
+    is_file_list,
 )
 
 import ROOT  # noqa: E402
@@ -138,24 +139,29 @@ def _inventory_entries():
 
 def count_events(args, tree="Events"):
     """
-    Entry count straight from the files' metadata.
+    Entry count straight from the files' metadata, for the record only (n_events, events_per_s):
+    bench_chain.py calls it after the timed phases, and no implementation is given it.
 
     A Count() action would be an entire event loop -- on a 14 M event file that was ~150 s per
-    run, spent purely on bookkeeping and charged to the setup phase. Opening each file is not
-    free either: ~0.2 s for a ~2000-branch NanoAOD on Lustre, ~5 min per run over the 1453 Run 3
-    files. With $EVENT_COUNTS (an archive/inventory_files.py CSV) the counts come from there, and the
-    files are opened only if one of them is not in it.
+    run. Opening each file is not free either: ~0.2 s for a ~2000-branch NanoAOD on Lustre,
+    ~5 min per run over the 1453 Run 3 files. With $EVENT_COUNTS (an
+    archive/inventory_files.py CSV) the counts come from there, and the files are opened only if
+    one of them is not in it.
     """
-    files = input_files(args.input)
+    return sum(file_entries(input_files(args.input), tree))
+
+
+def file_entries(files, tree="Events"):
+    """Entries of each file, from $EVENT_COUNTS where it has them all (see count_events)."""
     known = _inventory_entries()
     if known and all(os.path.basename(path) in known for path in files):
-        return sum(known[os.path.basename(path)] for path in files)
-    total = 0
+        return [known[os.path.basename(path)] for path in files]
+    entries = []
     for path in files:
         f = ROOT.TFile.Open(path)
-        total += int(f.Get(tree).GetEntries())
+        entries.append(int(f.Get(tree).GetEntries()))
         f.Close()
-    return total
+    return entries
 
 
 def make_dataframe(args, tree="Events"):
@@ -361,6 +367,9 @@ class Bench:
             "mode": args.mode,
             "threads": args.threads,
             "period": args.period,
+            # The 11-filter chain with every cut of the period, whatever the test: the campaign
+            # scripts set results of another chain aside by it.
+            "chain_cuts": chain_cuts(args.period, args.rp_id),
             "rp_id": args.rp_id,
             "arm": args.arm,
             "pot_type": args.pot_type,

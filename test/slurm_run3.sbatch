@@ -13,9 +13,8 @@
 #SBATCH --error=bench-run3-%j.err
 
 # One job of the Run 3 campaign: the 11-filter chain (10 branches) on the full original NanoAOD
-# files in $SCRATCH/bench/data3-full, read cold. JOB picks which one; run3_helios.sh submits J1 and
-# J2 by default, independently of each other (they may run at the same time on two nodes), and
-# J3/J4, which the campaign leaves to the synthetic files, only when asked, after the others.
+# files in $SCRATCH/bench/data3, read cold. JOB picks which one. The final campaign runs
+# J1, J3 and J4 as steps of slurm_final.sbatch (test/FINAL.md); J2 is not part of it.
 #
 #   J1  strong11 on core.txt (the whole set), 1-192 threads, and r2/r3 at 80-192 threads
 #       (STRONG11_R2_THREADS, STRONG11_R3_THREADS; "" for none), where a run is under a minute
@@ -29,11 +28,13 @@
 #       REPEATS_NODE (default 3) runs each      -> results-helios-run3-node
 #   J4  node11: python-pool, the same, into the same directory
 #
+# The pools take POOL_CHUNK_EVENTS entries of a file per task (default 250000): whole Run 3
+# files on 192 Python workers would not fit in the node's memory.
+#
 # Every job appends with RESUME=1: a resubmitted job runs only what is not yet recorded as ok.
 # FRESH=1 moves an existing results directory aside first.
 #
 #   sbatch --export=ALL,JOB=J1 test/slurm_run3.sbatch
-#   bash test/run3_helios.sh            # J1 and J2; --from J1 for all four
 #
 # CMS data is not public: it stays on scratch; results hold timings and counts only.
 
@@ -43,8 +44,8 @@ JOB="${JOB:?JOB must be J1, J2, J3 or J4}"
 export MACHINE="${MACHINE:-helios}"
 SCRATCH_BENCH="${SCRATCH}/bench"
 export MAMBA_ROOT_PREFIX="${SCRATCH_BENCH}/micromamba"
-# The whole set (2454 files, core.txt 2307) that every J1 so far read.
-DATA_DIR="${DATA_DIR:-${SCRATCH_BENCH}/data3-full}"
+# The Run 3 files and their lists (test/archive/slurm_fetch_eos.sbatch).
+DATA_DIR="${DATA_DIR:-${SCRATCH_BENCH}/data3}"
 STRONG_THREADS="${STRONG_THREADS:-1 4 8 12 16 24 32 48 64 80 96 112 128 144 160 176 192}"
 WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32 48 64 96}"
 NODE_THREADS="${NODE_THREADS:-192}"
@@ -52,6 +53,7 @@ REPEAT_THREADS="80 96 112 128 144 160 176 192"
 export STRONG11_R2_THREADS="${STRONG11_R2_THREADS-$REPEAT_THREADS}"
 export STRONG11_R3_THREADS="${STRONG11_R3_THREADS-$REPEAT_THREADS}"
 export REPEATS_NODE="${REPEATS_NODE:-3}"
+export POOL_CHUNK_EVENTS="${POOL_CHUNK_EVENTS:-250000}"
 export SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-0.05}"
 
 case "$JOB" in
@@ -107,7 +109,8 @@ export REPEATS_WEAK="${REPEATS_WEAK:-1}"
 # The Run 3 cuts (bench_spec.PERIODS["run3"]): the default period's diamond cuts drop almost
 # every event of 2024F-2026D.
 export CHAIN_ARGS="${CHAIN_ARGS:---period run3}"
-# Event counts from the inventory instead of opening all 1453 files before every run.
+# Event counts for the records (n_events, events_per_s), read after the timed phases, from the
+# inventory instead of opening every file after every run. The pools count entries themselves.
 export EVENT_COUNTS="$DATA_DIR/local.csv"
 
 case "$JOB" in

@@ -1,0 +1,22 @@
+\begin{tabular}{lrrr}
+\toprule
+ & Run 2 Open Data$^*$ & Run 3, cuts of the artificial files & artificial, slim files \\
+\midrule
+Events [$10^9$] & 1.05 & 1.29 & 29.8 \\
+Size on disk [TB] & 1.04 & 1.77 & 1.54 \\
+Codec & LZMA:9 & LZMA:9 & - \\
+Branches per file & 1347 & 1984 & - \\
+Baskets per file & 498\,579 & 163\,955 & - \\
+Read in the loop [GB] & 6.8 & 53.1 & 1544.6 \\
+Read in the loop [\%] & 0.7 & 3.0 & 100.0 \\
+Loop, 1 thread [s] & 985 & 3702 & 30851 \\
+Fastest loop [s] & 12.0 & 43.4 & 333.9 \\
+at threads & 192 & 160 & 176 \\
+Maximum speedup $S$ & 82.4 & 85.4 & 92.4 \\
+Within 5\% of fastest, from & 176 & 160 & 160 \\
+Efficiency $E$ at 96 threads & 0.65 & 0.72 & 0.69 \\
+Peak RSS per thread [MB] & 54 & 64 & 16 \\
+Read rate at fastest [GB/s] & 0.61 & 1.23 & 4.63 \\
+\bottomrule
+\multicolumn{4}{l}{\footnotesize $*$ loop times: fastest of the repeats at each thread count, not their median.} \\
+\end{tabular}

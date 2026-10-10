@@ -49,7 +49,7 @@ UNIT="$OUT/unit.root"
 
 echo "=== 1. $(basename "$SRC") -> $(basename "$SLIM") [$(date +%H:%M:%S)]"
 if [[ ! -f "$SLIM" ]]; then
-    "$PY" test/make_slim.py --columns chain11 --input "$SRC" --output "$SLIM"
+    PYTHONPATH=test "$PY" test/archive/make_slim.py --columns chain11 --input "$SRC" --output "$SLIM"
 fi
 ls -l "$SLIM"
 
@@ -134,7 +134,7 @@ PYEOF
 )"
 
 echo "=== 4. ${COPIES} copies of $(basename "$UNIT") [$(date +%H:%M:%S)]"
-bash test/make_bigset.sh --source "$UNIT" --copies "$COPIES" --out-dir "$OUT"
+bash test/archive/make_bigset.sh --source "$UNIT" --copies "$COPIES" --out-dir "$OUT"
 # Written last, so its existence means the set is complete. run_benchmark.sh takes BIG_COPIES
 # from it, which is what lets the campaign job be queued before this one has measured anything.
 echo "$COPIES" >"$OUT/copies.txt"

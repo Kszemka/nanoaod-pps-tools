@@ -190,9 +190,11 @@ def main():
     tasks = [(path, args.rp_id, not args.no_loop) for path in paths]
     if args.jobs > 1:
         # spawn, not fork: a forked child would inherit the parent's ROOT and TBB state.
+        # Every file JITs its own filters and Cling never frees them, so workers are replaced
+        # after a few files instead of growing over the whole list.
         context = multiprocessing.get_context("spawn")
         with context.Pool(args.jobs, initializer=init_worker,
-                          initargs=(args.threads, args.no_loop)) as pool:
+                          initargs=(args.threads, args.no_loop), maxtasksperchild=25) as pool:
             rows = []
             for index, row in enumerate(pool.imap(describe_task, tasks), 1):
                 print(f"[{index}/{len(paths)}] {row['path']}", file=sys.stderr)

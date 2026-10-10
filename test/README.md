@@ -1,14 +1,15 @@
 # Benchmark: RDataFrame vs Python na NanoAOD
 
-Zostały tylko skrypty trzech ścieżek: ostatecznej kampanii na Heliosie (jedno zadanie
-`slurm_final.sbatch` na `plgrid-now`: łańcuch 11 filtrów na ~1 TB sztucznych pełnych plików,
-~1 TB Run 2 Open Data i Run 3 z `data3-full`, plus RDF i uproot na całym węźle na Run 3), pojedynczych
-zadań Run 3 (`run3_helios.sh`) i kampanii ogólnej
-`slurm_benchmark.sbatch` na plikach sztucznych (`DATASET=synthetic` i `DATASET=big`), z której
-pochodzi porównanie RDF / uproot / pętla w Pythonie (seria rozmiarów `size`, `sizepy`, wykresy
-08 i 13). Pobieranie danych (EOS, DAS, Open Data), budowanie list i zakończone kampanie (Helios
-H1–H4, slim11, real vs synthetic na łańcuchu 5 filtrów, memtrace) są w
-[`archive/`](archive/README.md), razem z ich opisami; nic z poniższego ich nie woła.
+W `test/` są tylko pliki ostatecznej kampanii i analizy jej wyników: jedno zadanie
+`slurm_final.sbatch` na `plgrid-now` (bramki Run 2 i Run 3, łańcuch 11 filtrów na Run 3 i na
+~1 TB Run 2 Open Data, RDF, uproot i Python na całym węźle na Run 3). Lista plików, kroki,
+komenda i co skopiować po zadaniu: [`FINAL.md`](FINAL.md). `slurm_benchmark.sbatch` jest też
+kampanią ogólną na plikach sztucznych (`DATASET=synthetic`), z której pochodzi porównanie RDF /
+uproot / pętla w Pythonie (seria rozmiarów `size`, `sizepy`, wykresy 08 i 13). Pobieranie danych
+(EOS, DAS, Open Data), budowanie list, kopie sztucznego zbioru (`make_bigset.sh`), zbiór slim
+(`make_slim.py`), osobne zadania Run 3 (`run3_helios.sh`) i zakończone kampanie (Helios H1–H4,
+slim11, pełne pliki sztuczne, real vs synthetic na łańcuchu 5 filtrów, memtrace) są w
+[`archive/`](archive/README.md), razem z ich opisami.
 
 ## Co się uruchamia
 
@@ -16,33 +17,31 @@ Ręcznie uruchamia się tylko pliki z kolumny „uruchamiasz”, resztę wołaj�
 
 | ścieżka | uruchamiasz | to woła |
 |---|---|---|
-| ostateczna kampania (Helios, `plgrid-now`) | `sbatch test/slurm_final.sbatch`: bramka Run 2, F, R, J1, J3 po kolei | `check_chain11.py`; `slurm_benchmark.sbatch` (F, R); `slurm_run3.sbatch` (J1, J3) |
-| pojedyncze zadania Run 3 (Helios, `plgrid`) | `run3_helios.sh`: J1 strong, J2 weak; J3, J4 opcjonalnie | `slurm_run3.sbatch` → `validate.py`, `dataset_json.py`, `bench_chain.py`, `run_benchmark.sh` |
-| pliki sztuczne, `DATASET=big` (Ares, Helios) | `sbatch slurm_benchmark.sbatch` | `run_all.sh` → `validate.py`, `run_benchmark.sh` → `plot_results.py` |
-| kopie dla `DATASET=big` (raz) | `make_bigset.sh` | — |
-| wykresy i tabele (lokalnie) | `plot_results.py`; porównanie zbiorów: `plot_real_vs_synthetic.py` | — |
+| ostateczna kampania (Helios, `plgrid-now`) | `sbatch test/slurm_final.sbatch`: `gate`, `gate3`, `J1`, `J3`, `R`, `J4` po kolei | `check_chain11.py` (bramki); `slurm_run3.sbatch` (J1, J3, J4); `slurm_benchmark.sbatch` (R) |
+| pliki sztuczne (Ares, Helios) | `sbatch slurm_benchmark.sbatch` | `run_all.sh` → `validate.py`, `run_benchmark.sh` → `plot_results.py` |
+| wykresy i tabele (lokalnie) | `plot_results.py`; porównanie zbiorów: `plot_real_vs_synthetic.py`; Block M: `plot_memory_control.py` | — |
 
 `run_benchmark.sh` woła pojedyncze pomiary `bench_filter.py`, `bench_chain.py`,
-`bench_efficiency.py` i `bench_pool.py`, a dla T6 `make_slim.py`. Wszystkie importują
+`bench_efficiency.py` i `bench_pool.py`, a dla T6 `archive/make_slim.py`. Wszystkie importują
 `bench_common.py`, `bench_spec.py` i `impl_*.py`.
 
 ## Pliki
 
 | plik | rola |
 |---|---|
-| `run3_helios.sh`, `slurm_run3.sbatch` | kampania Run 3: zadania J1–J4 (`JOB=`); domyślnie J1 i J2, niezależnie od siebie, J3 i J4 opcjonalnie (`afterany`) |
-| `slurm_final.sbatch` | ostateczna kampania jako jedno zadanie na `plgrid-now` (12 h): kroki `gate`, `F`, `R`, `J1`, `J3` (`STEPS=`), wznawialne, `DRY_RUN=1` wypisuje kroki |
-| `check_chain11.py` | przed kampanią na prawdziwych plikach: typy 10 kolumn łańcucha w każdym pliku i liczba zdarzeń po każdym z 11 filtrów, dla okresu `--period` |
+| `FINAL.md` | ostateczna kampania: pliki, kroki, komenda, wyniki |
+| `slurm_final.sbatch` | ostateczna kampania jako jedno zadanie na `plgrid-now` (12 h): kroki `gate`, `gate3`, `J1`, `J3`, `R`, `J4` (`STEPS=`), wznawialne, `DRY_RUN=1` wypisuje kroki |
+| `slurm_run3.sbatch` | kroki Run 3: J1 strong, J3 RDF i uproot na całym węźle, J4 Python na całym węźle (`JOB=`); J2 weak poza kampanią |
+| `check_chain11.py` | przed kampanią na prawdziwych plikach: typy 10 kolumn łańcucha w każdym pliku i liczba zdarzeń po każdym z 11 filtrów, dla okresu `--period`; pierwsza linia to `chain_cuts` |
 | `plot_real_vs_synthetic.py` | porównanie zbiorów `--set DIR:TEST:LABEL`: rysunek pełnych plików (czas, przyspieszenie, RSS) i tabela zbiorów (`sets_summary.{csv,tex}`) |
+| `plot_memory_control.py` | Block M: pamięć na sztucznych pełnych kopiach wobec slim (`memory_control.{png,csv}`) |
 | `slurm_benchmark.sbatch` | kampania ogólna: zadanie na całym węźle (`--exclusive`), Ares albo Helios; `DATASET_JSON_INPUT` pisze `dataset.json` |
 | `run_all.sh` | sprawdza środowisko i Git LFS, uruchamia walidację, potem kampanię |
 | `validate.py` | zgodność wszystkich implementacji, geometria C++ vs Python, 1 vs N wątków |
 | `run_benchmark.sh` | kampania T1/T2/T4/T5/T6/T2S i testy `*11`, `size`, `sizepy`, zbiera `raw.jsonl`, na końcu rysuje wykresy |
 | `dataset_json.py` | `dataset.json` w katalogu wyników: pliki, zdarzenia, gałęzie, klastry i koszyki na plik, kodek |
-| `make_slim.py` | kopia wejścia T1 z samymi używanymi kolumnami (plik albo lista) dla T6 |
-| `make_bigset.sh` | tylko kopiuje: `ds_1.root` … `ds_96.root` obok `ds_x32.root`, czyli wejście `DATASET=big` |
 | `bench_filter.py`, `bench_chain.py`, `bench_efficiency.py` | pojedynczy pomiar (TEST 1–3) |
-| `bench_pool.py` | łańcuch na całym węźle bez ImplicitMT: uproot (`uproot-pool`) albo AsNumpy (`python-pool`) w puli procesów, plik na zadanie |
+| `bench_pool.py` | łańcuch na całym węźle bez ImplicitMT: uproot (`uproot-pool`) albo AsNumpy (`python-pool`) w puli procesów, kawałek pliku (`--chunk-events`, domyślnie 250 tys. zdarzeń) na zadanie |
 | `bench_common.py` | parser argumentów, fazy czasu, liczniki bajtów i RSS (z procesami potomnymi), rekord `BENCH` |
 | `bench_spec.py` | łańcuchy, kolumny, cięcia i listy wejść, bez ROOT-a (dla procesów puli uproot) |
 | `impl_rdf.py`, `impl_python.py`, `impl_uproot.py` | implementacje mierzonych operacji |
@@ -86,7 +85,7 @@ po klastrach, więc para (N wątków, `ds_xN`) daje uczciwe skalowanie słabe.
 
 `ds_x32_slim` to `Snapshot` z `ds_x32` tylko z gałęziami, które czytają testy (`nPPSLocalTrack`,
 `PPSLocalTrack_{decRPId,rpType,x,y}`, `Proton_singleRP_xi`; plus gałęzie rozmiaru, które
-Snapshot dopisuje dla kolumn tablicowych) zamiast 1984. `make_slim.py` przenosi kodek pliku
+Snapshot dopisuje dla kolumn tablicowych) zamiast 1984. `archive/make_slim.py` przenosi kodek pliku
 źródłowego i jego średni rozmiar klastra, a zapis jest jednowątkowy, więc liczba klastrów się
 zgadza. Sprawdza też, że liczba zdarzeń jest identyczna. Dla listy odchudza każdy plik osobno
 do `slim/` obok listy wyjściowej, a samą listę zapisuje na końcu: jeśli istnieje, jest kompletna.
@@ -96,201 +95,121 @@ do `slim/` obok listy wyjściowej, a samą listę zapisuje na końcu: jeśli ist
 Wszystko, czego praca jeszcze potrzebuje z Heliosa, w jednym zadaniu `slurm_final.sbatch`
 na partycji `plgrid-now`, krok po kroku na tym samym węźle, więc żaden pomiar nie dzieli Lustre
 z innym. Jedno zadanie, bo QoS `plgrid-now` pozwala na jedno zadanie użytkownika naraz, licząc
-oczekujące (`MaxSubmitPU=1`), więc łańcucha z zależnościami nie da się nawet wysłać. Reszta
-ograniczeń to przydział zadania: jeden węzeł (192 rdzenie), 384 000 MB, `MaxTime=12:00:00`.
+oczekujące (`MaxSubmitPU=1`). Pliki, sprawdzenie danych, wznawianie i co skopiować po zadaniu:
+[`FINAL.md`](FINAL.md).
 
 | krok | co | katalog wyników na `$SCRATCH/bench` | szacunek |
 |---|---|---|---|
-| `bigset` | `make_bigset.sh`: brakujące kopie `ds_1.root` … `ds_96.root` z `data/ds_x32.root` | `data/` | 0,5–1 h, gdy brak wszystkich; sekundy, gdy są |
 | `gate` | `check_chain11.py --period 2016` na każdym pliku Run 2, 96 procesów | `run2_chain11_gate.{txt,status}`, `run2_chain11.csv` | ~5 min |
-| `F` | `strong11`, sztuczne pełne pliki (`DATASET=big`, 96 kopii `ds_x32`) | `results-helios-full11-1tb` | 1,5–2 h |
-| `R` | `strong11`, Run 2 Open Data, `--period 2016`; tylko gdy bramka dała 0 | `results-helios-run2-chain11-1tb` | 1–1,5 h |
-| `J1` | `strong11`, Run 3 `core.txt`, `--period run3` | `results-helios-run3-chain11` | 2,5–3 h |
-| `J3` | `node11`: RDF na 192 wątkach i `uproot-pool` na 192 procesach, po 3 biegi | `results-helios-run3-node` | ~0,5 h |
+| `gate3` | to samo z `--period run3` na każdym pliku Run 3 | `run3_chain11_gate.{txt,status}`, `run3_chain11.csv` | 5–10 min |
+| `J1` | `strong11`, Run 3 `core.txt`, `--period run3`; tylko po `gate3` z kodem 0 | `results-helios-run3-chain11` | 3–4 h |
+| `J3` | `node11`: RDF na 192 wątkach i `uproot-pool` na 192 procesach, po 3 biegi | `results-helios-run3-node` | ~1 h |
+| `R` | `strong11`, Run 2 Open Data, `--period 2016`; tylko po `gate` z kodem 0 | `results-helios-run2-chain11-1tb` | ~1 h |
+| `J4` | `node11`: `python-pool` na 192 procesach, kawałki po 250 tys. zdarzeń, 3 biegi po najwyżej 1,5 h; bieg po timeoucie nie jest powtarzany | `results-helios-run3-node` | 1–4,5 h |
 
-F, R i J1: 1–192 wątki raz, 80–192 trzy razy (r1–r3). Razem ~6–7,5 h z `validate.py` przed
-każdym krokiem pomiarowym. J2 (weak na Run 3) i J4 (Python w puli) nie wchodzą: weak jest
-w pracy tylko na slim, a pula Pythona na całym zbiorze grozi brakiem pamięci i daje wynik,
-który da się przewidzieć z bloku A.
+J1 i R: 1–192 wątki raz, 80–192 trzy razy (r1–r3). Razem ~6–9 h z `validate.py` przed
+każdym krokiem Run 3. J4 jest ostatni: brak czasu albo pamięci kosztuje tylko J4.
 
-- Błąd jednego kroku nie zatrzymuje następnych; na końcu logu jest podsumowanie kodów wyjścia.
-- Wszystko dopisuje z `RESUME=1`, a bramka zapisuje swój kod wyjścia, więc to samo zadanie
-  wysłane jeszcze raz (np. po 12 h) robi tylko brakujące biegi. Bramkę od nowa: usunąć
-  `run2_chain11_gate.status`. Zapisaną bramkę, po której łańcuch nie zostawił nic
-  (`0 left after the chain`), krok `gate` liczy od nowa sam.
-- J1 sam odsuwa katalog `results-helios-run3-chain11`, jeśli ma rekordy z innym okresem niż
-  `run3` (stare cięcia), jako `...-oldcuts-<data>`. R tak samo odsuwa
-  `results-helios-run2-chain11-1tb` z rekordami `events_passed: 0` jako `...-nopass-<data>`.
-- Bramka: kod 3 to plik, którego nie da się przeczytać przez łańcuch (np. bez którejś z 10
-  gałęzi), kod 2 to kolumna z dwoma typami, kod 4 to łańcuch, po którym w całym zbiorze nie
-  zostaje żadne zdarzenie. Wtedy R jest pomijane i wracamy do decyzji. Kod 4 to nie formalność:
-  kosze wszystkich 10 gałęzi i tak są czytane z dysku, ale filtry za pierwszym pustym nie są
-  liczone, a ich gałęzie rozpakowywane, więc pętla ma mniej pracy CPU niż na danych, które
-  przechodzą (na pliku 2016 te same 0,75% pliku odczytu, ale o ~35% mniej CPU). Cięcia 2016:
-  „Pełne pliki, łańcuch 11”.
+```bash
+cd $SCRATCH/bench/nanoaod-pps-tools && git pull
+DRY_RUN=1 bash test/slurm_final.sbatch
+sbatch test/slurm_final.sbatch
+cat $SCRATCH/bench/final_progress.log    # po każdym kroku jedna linia
+```
 
-Krok po kroku:
-
-1. Laptop: wysłać kod (`git push`). `doc/` i pliki `.root` są ignorowane.
-2. Helios, login: pobrać kod i sprawdzić, że nic innego nie biegnie ani nie czeka. Starsze
-   zadania benchmarku (np. na `plgrid`) skasować albo odczekać, bo dzieliłyby Lustre:
-
-   ```bash
-   cd $SCRATCH/bench/nanoaod-pps-tools && git pull
-   squeue -u $USER
-   ```
-
-3. Dane na scratchu (czyszczony po ~30 dniach):
-
-   ```bash
-   hpc-fs
-   ls -l $SCRATCH/bench/data/ds_x32.root $SCRATCH/bench/data/ds_1.root $SCRATCH/bench/data/ds_96.root \
-         $SCRATCH/bench/data2/core.txt $SCRATCH/bench/data2/local.csv
-   head -1 $SCRATCH/bench/data3-full/READY   # files 2454
-   f=$(head -1 $SCRATCH/bench/data3-full/core.txt); ls -lL "$f"   # plik danych, nie tylko lista
-   ```
-
-   Run 3 jest w `data3-full` (ten sam zbiór co wszystkie dotąd biegi J1, dawniej przez
-   dowiązanie `data3-snap`). W `data3-full` są listy, `READY` i inwentaryzacja; same pliki są pod
-   `data3-full/data`, dowiązaniem do `data3/data`. Brak kopii
-   `ds_N.root`: robi je krok `bigset` w tym samym zadaniu, wystarczy `ds_x32.root` i miejsce na
-   ~1 TB (najpierw `hpc-fs`, czy kwota to pomieści). Brak Open
-   Data: `opendata_helios.sh --fetch-only`, który trzeba najpierw przenieść z `archive/` razem
-   z plikami, które woła (`archive/README.md`, na górze).
-
-4. Podgląd i wysłanie (z katalogu repo, tam trafią logi):
-
-   ```bash
-   DRY_RUN=1 bash test/slurm_final.sbatch
-   sbatch test/slurm_final.sbatch
-   ```
-
-   Na loginie `DRY_RUN=1` wypisuje też brakujące wejścia kroków. Zadanie z brakującym wejściem
-   kończy się od razu, zanim cokolwiek zmierzy.
-
-5. Śledzenie: `squeue -u $USER`, `tail -f bench-final-<id>.out`. Do końca zadania nie robić
-   `git pull`: kroki wołają skrypty z repo w chwili startu.
-6. Brak czasu albo jeden krok do powtórzenia: to samo jeszcze raz, ewentualnie tylko część:
-
-   ```bash
-   sbatch test/slurm_final.sbatch
-   sbatch --export=ALL,STEPS="J1 J3" test/slurm_final.sbatch
-   ```
-
-7. Laptop: zabrać wyniki (polecenia w `results/README.md`) i zrobić rysunki: porównanie zbiorów
-   `plot_real_vs_synthetic.py` i wykres 17 z `plot_results.py` na `results/run3/node`.
+Po przerwaniu (np. po 12 h) ta sama komenda jeszcze raz liczy tylko to, czego brakuje.
 
 ## Kampania Run 3 (Helios)
 
-Pojedyncze zadania na `plgrid`; ostateczne J1 i J3 biegną w `slurm_final.sbatch`.
-
-Tylko łańcuch 11 filtrów (10 gałęzi), tylko pełne oryginalne pliki z `data3-full`, czytane z
-Lustre na zimno. Listy (`core.txt`, `weak_N.txt`, `impl.txt`, `local.csv`, `sets.json`,
-`READY`) leżą w `$SCRATCH/bench/data3-full`, pliki pod `data3-full/data`; skrypty, które je pobrały i zbudowały, są w `archive/`
-(„Run 3 z EOS przez lxplus”). Osobne zadania `slurm_run3.sbatch`, każde na całym węźle. Domyślnie tylko skalowanie,
-J1 i J2: żadne nie czeka na drugie, więc każde stoi w kolejce samo i mogą biec jednocześnie na
-dwóch węzłach. Cache stron jest osobny na każdym węźle, ale Lustre wspólny, więc nakładanie się
-J1 i J2 w czasie trzeba podać przy wynikach. J3 i J4 startują po końcu wszystkich wcześniej
-wysłanych (`afterany`); J3 wchodzi do ostatecznej kampanii, J4 nie:
+Kroki J1, J3 i J4 ostatecznej kampanii, każdy przez `slurm_run3.sbatch` (`JOB=`) na całym
+węźle. Tylko łańcuch 11 filtrów (10 gałęzi), tylko pełne oryginalne pliki z `data3`,
+czytane z Lustre na zimno. Pliki leżą pod `$SCRATCH/bench/data3/data`, listy (`core.txt`,
+`weak_N.txt`, `impl.txt`, `local.csv`, `sets.json`, `READY`) obok, w `data3`; robi je
+`archive/slurm_fetch_eos.sbatch` (`FINAL.md`, „Listy Run 3”), a skrypty pobierania są w
+`archive/` („Run 3 z EOS przez lxplus”). Osobne zadania na
+`plgrid` (`archive/run3_helios.sh`, także J2 weak) nie wchodzą do ostatecznej kampanii.
 
 | zadanie | co | katalog wyników |
 |---|---|---|
 | J1 | `strong11` na `core.txt`, 1–192 wątki, 80–192 jeszcze dwa razy (r2, r3); najpierw próba 1 wątku na `impl.txt`, z niej `RUN_TIMEOUT` (3 × szacunek t1) | `results-helios-run3-chain11` |
-| J2 | `weak11`: `weak_N` na N wątkach, N = 1, 2, 4, 8, 16, 32, 48, 64, 96 | `results-helios-run3-chain11-weak` |
+| J2 | `weak11`: `weak_N` na N wątkach, N = 1, 2, 4, 8, 16, 32, 48, 64, 96 (poza kampanią) | `results-helios-run3-chain11-weak` |
 | J3 | `node11`: RDF na 192 wątkach (kontrola) i `uproot-pool` na 192 procesach, cały zbiór, po `REPEATS_NODE` (3) biegów | `results-helios-run3-node` |
-| J4 (opcja) | `node11`: `python-pool` na 192 procesach, cały zbiór | `results-helios-run3-node` |
-
-```bash
-cd $SCRATCH/bench/nanoaod-pps-tools
-bash test/run3_helios.sh --dry-run        # podgląd
-bash test/run3_helios.sh                  # J1 i J2 (5 h i 2 h)
-bash test/run3_helios.sh --from J1        # J1-J4
-bash test/run3_helios.sh --only J3        # jedno zadanie
-TIME_J1=12:00:00 bash test/run3_helios.sh --only J1
-```
+| J4 | `node11`: `python-pool` na 192 procesach, cały zbiór, 3 biegi, `RUN_TIMEOUT=5400` | `results-helios-run3-node` |
 
 - **Pule (`bench_pool.py`):** uproot i AsNumpy nie zrównoleglają pętli i trzymają czytane
   kolumny w pamięci, więc na całym węźle biegną tak, jak używa się ich w praktyce: N procesów,
-  jeden plik na zadanie, pliki od największego. Proces `uproot-pool` nie importuje ROOT-a.
-  `setup` to start procesów i import bibliotek (do bariery), `loop` to wszystkie pliki.
-  `cpu_loop` zawiera CPU procesów, `bytes_loop` i `io_*_loop` to ich sumy, a
-  `peak_rss_tree_kb` to szczyt sumy RSS rodzica i procesów z przebiegu `rss_*.csv` (próbnik
-  liczy całe drzewo procesów). Zabity proces (np. przez OOM) kończy bieg jako `failed`,
-  zamiast go zawiesić.
+  każdy dostaje kawałek pliku (`--chunk-events`, `POOL_CHUNK_EVENTS`, domyślnie 250 000
+  zdarzeń; 0 = cały plik), kawałki od największego. Kawałek trzyma pamięć procesu w ryzach
+  także przy największych plikach Run 3: 192 procesy × cały plik w pamięci nie zmieściłyby się
+  w 384 GB. uproot czyta kawałek przez `entry_start`/`entry_stop`, AsNumpy przez
+  `RDatasetSpec` z zakresem (`Range` w starszym ROOT-cie). Rekord ma `chunk_events` i `tasks`.
+  Proces `uproot-pool` nie importuje ROOT-a. `setup` to start procesów i import bibliotek (do
+  bariery), `loop` to wszystkie kawałki. `cpu_loop` zawiera CPU procesów, `bytes_loop`
+  i `io_*_loop` to ich sumy, a `peak_rss_tree_kb` to szczyt sumy RSS rodzica i procesów
+  z przebiegu `rss_*.csv` (próbnik liczy całe drzewo procesów). Zabity proces (np. przez OOM)
+  kończy bieg jako `failed`, zamiast go zawiesić.
+- **Timeout w `node11`:** bieg implementacji, który skończył się timeoutem (kod 124), nie jest
+  powtarzany ani w tym zadaniu, ani po wznowieniu: kolejne biegi tej implementacji są pomijane,
+  bo trwałyby tak samo. Czas granicy podaje się w pracy jako dolne ograniczenie.
 - **Wykres 17** (`17_whole_node.png`): czas całkowity, CPU-h w pętli i szczytowy RSS wszystkich
   procesów dla RDF / uproot / Python. `plot_results.py` sprawdza też, że wszystkie dają tę samą
   liczbę zdarzeń.
 - **Wznawianie:** każde zadanie biegnie z `RESUME=1`, więc ponownie wysłane dokłada tylko to,
   czego nie ma jako `ok`. `FRESH=1` odsuwa istniejący katalog wyników.
-- **Po każdym zadaniu:** skopiować katalog wyników do `results/run3/` (J1 → `chain11/`,
-  J2 → `chain11-weak/`, J3/J4 → `node/`), bo scratch jest czyszczony.
+- **Po zadaniu:** skopiować katalogi wyników do `results/run3/` (J1 → `chain11/`,
+  J3/J4 → `node/`), bo scratch jest czyszczony.
 
-### Cięcia Run 3 i nowe J1, J2
+### Cięcia Run 3
 
 Pierwsze J1 i J2 biegły z cięciami 2026, czyli z próbki `examples/test.root` (run 396727):
 RP 22, pary 23|123 i 3|103. Na erach Run2024C–Run2026D przepuszczają 10,8%, a w kilku prawie
 nic (w plikach z `READY`: 2026C 165 z 1,28 mln, 2026D 0). RP 22 ma 16–24% zdarzeń w 2024C–E,
 0,9% w 2024F, 2–8% w 2025 i 0,01–0,4% w 2026; `multi_rp_idx` ucina 97% w 2024F i 2026B,
-`theta_y` 99,4% w 2026D. Leżą w
-`results/archive/run3-cuts2026/`. Run 3 dostaje własny okres w `bench_spec.PERIODS`, tak jak
-2016, i całe J1, J2 od nowa.
+`theta_y` 99,4% w 2026D. Leżą w `results/archive/run3-cuts2026/`. Run 3 ma własny okres
+w `bench_spec.PERIODS`, tak jak 2016.
 
 Cięcia Run 3 (`PERIODS["run3"]`, `slurm_run3.sbatch` daje je domyślnie przez
 `CHAIN_ARGS="--period run3"`) wybierają na pikselach: w plikach 2024–2026 (np. run 401844)
 diamenty mają ślady w < 0,5% zdarzeń, a protony multi-RP w 3%. Zamiast diamentu typ 4 (piksel),
-zamiast RP 22 RP 23, a cztery cięcia na śladach odwrócone: ślad poza protonem multi-RP
-(`multiRPProtonIdx == -1`), ślad w protonie single-RP (`singleRPProtonIdx >= 0`), ślad bez
-pomiaru czasu (`time == 0`, `timeUnc == 0`). Na run 401844 zostaje 60% zdarzeń (cięcia 2026:
-0,4%); `validate.py` porównuje oba okresy w RDF, uproot i Pythonie.
+zamiast RP 22 RP 23, ślad poza protonem multi-RP (`multiRPProtonIdx == -1`) i ślad w protonie
+single-RP (`singleRPProtonIdx >= 0`).
 
-J1 od nowa biegnie w `slurm_final.sbatch` (krok `J1`), z r2 i r3 przy 80–192 wątkach, które
-`slurm_run3.sbatch` daje domyślnie (`STRONG11_R2_THREADS=""` wyłącza). Szacunek: t1 ~1 h, cały
-przebieg z powtórkami ~2,5–3 h. J2 z cięciami Run 3 nie jest planowane.
+Dwa pozostałe cięcia na śladach to położenie, `PPSLocalTrack_x > 4` i `PPSLocalTrack_y > 0`
+(`bench_spec.TRACK_XY_CUTS`), takie same we wszystkich okresach. Wcześniej były to `time`
+i `timeUnc`, ale piksele i paski czasu nie mierzą (wszędzie 0), więc te dwie gałęzie były
+czytane, a cięcie na nich niczego nie wybierało; x i y mają wartości w każdym śladzie i
+przepuszczają większość zdarzeń. Każdy rekord ma pole `chain_cuts` (np.
+`...,track_x>4,track_y>0,...`), a `check_chain11.py` wypisuje je w pierwszej linii, więc wyniki
+z innymi cięciami da się rozpoznać. Zbiór slim (`results/synthetic-slim`) i Block M zmierzono
+jeszcze z `time`/`timeUnc`: te same 10 gałęzi co do liczby i typów, inne dwie z nich.
 
 ## Pełne pliki, łańcuch 11 (Helios)
 
 Ten sam łańcuch co Run 3 i slim (11 filtrów, 10 gałęzi, `strong11`) na całym zbiorze pełnych
-plików ~1 TB naraz, czytanym z Lustre na zimno. Pliki mają ~1 TB, a pętla czyta z nich kilka
-procent; slim (`results/synthetic-slim`) to 1,5 TB czytane w całości. Kroki F i R
-`slurm_final.sbatch` (ostateczna kampania, wyżej), każdy przez `slurm_benchmark.sbatch`:
+plików ~1 TB naraz, czytanym z Lustre na zimno. Krok R `slurm_final.sbatch` przez
+`slurm_benchmark.sbatch`:
 
 | zadanie | dane | co | katalog wyników |
 |---|---|---|---|
-| F | `DATASET=big`, `$SCRATCH/bench/data`: 96 kopii `ds_x32` (`lists/core.txt`), 1,07 mld zdarzeń, 1,04 TB | `strong11`, 1–192 wątki, 80–192 trzy razy (r1–r3) | `results-helios-full11-1tb` |
-| R | `DATASET=real`, `$SCRATCH/bench/data2`: Run 2 Open Data `core.txt`, 653 pliki, 1,05 mld zdarzeń, 1,04 TB | to samo z `CHAIN_ARGS="--period 2016"` | `results-helios-run2-chain11-1tb` |
+| R | `DATASET=real`, `$SCRATCH/bench/data2`: Run 2 Open Data `core.txt`, 653 pliki, 1,05 mld zdarzeń, 1,04 TB | `strong11`, 1–192 wątki, 80–192 trzy razy (r1–r3), `CHAIN_ARGS="--period 2016"` | `results-helios-run2-chain11-1tb` |
 
-R idzie tylko po bramce `check_chain11.py` (krok `gate`), z `RUN_TIMEOUT=7200` jak F. Dane,
-bramka i kody wyjścia: „Ostateczna kampania”. Po zadaniu skopiować wyniki do
-`results/full-chain11/{artificial-1tb,run2-1tb}` i uruchomić porównanie (polecenie
-w `results/README.md`).
+R idzie tylko po bramce `check_chain11.py` (krok `gate`) z kodem 0, z `RUN_TIMEOUT=7200`.
+„R na czysto”: katalog wyników z rekordami innych cięć (`chain_cuts`) krok odsuwa jako
+`...-oldcuts-<data>` i mierzy od nowa, więc w katalogu są tylko biegi z obecnymi cięciami.
+Sztuczne pełne pliki (dawny krok F, 96 kopii `ds_x32`, `DATASET=big`) zostały zmierzone
+wcześniej i nie są powtarzane: `results/full-chain11/artificial-1tb`, w pracy jako kontrola
+pamięci (Block M).
 
-### Cięcia 2016 i nowe R
+### Cięcia 2016
 
 Pierwsze R (8 października 2026) biegło z czterema cięciami na śladach z 2026 i nie przepuściło
 żadnego zdarzenia: w 2016 PPS miał tylko detektory paskowe (`rpType 3`, pary 2|3 i 102|103),
-każdy ślad należy do protonu single-RP, a żaden nie ma pomiaru czasu. `single_rp_idx == -1`
-i `time != 0` odrzucały więc wszystko. `PERIODS["2016"]` zostawia cięcie multi-RP i odwraca
-pozostałe trzy, jak Run 3: ślad w protonie multi-RP (`multiRPProtonIdx >= 0`), ślad w protonie
-single-RP (`singleRPProtonIdx >= 0`), ślad bez czasu (`time == 0`, `timeUnc == 0`). Na pliku
-`2A2D52E2-CD96-BD4C-8D60-4BC274FA8ED5.root` (102 941 zdarzeń):
-
-| all | theta_y | multi_proton | multi_rp_idx | single_rp_idx … pps | double_arm | strip | rp_id 3 | xi |
-|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 102 941 | 47 850 | 37 899 | 37 334 | 37 334 | 7 227 | 7 227 | 6 496 | 5 427 (5,3%) |
-
-Ślad poza protonem multi-RP (jak w Run 3) zostawiłby 1,7%. Stare wyniki leżą lokalnie jako
-`results-helios-run2-chain11-1tb-nopass` i nie wchodzą do pracy. Powtórka (krok `gate` liczy
-się od nowa, a R odsuwa stary katalog na scratchu sam):
-
-```bash
-cd $SCRATCH/bench/nanoaod-pps-tools && git pull && \
-sbatch --export=ALL,STEPS="gate R" test/slurm_final.sbatch
-```
-
-Potem `cat $SCRATCH/bench/run2_chain11_gate.txt` (przepływ po erach) i w `bench.csv` to samo
-`events_passed` > 0 we wszystkich biegach. Pierwsza powtórka biegnie przy pobieraniu Run 3
-w tle (okno czasowe podać przy wynikach); przy rozrzucie r1–r3 powyżej 10% dołożyć R do
-zadania z J1 i J3, wcześniej ręcznie odsuwając katalog wyników.
+każdy ślad należy do protonu single-RP, a żaden nie ma pomiaru czasu. `PERIODS["2016"]`
+zostawia cięcie multi-RP (`multiRPProtonIdx >= 0`), dodaje ślad w protonie single-RP
+(`singleRPProtonIdx >= 0`) i te same cięcia położenia co Run 3 (`x > 4`, `y > 0`; na
+paskach y leży mniej więcej od −1,6 do 1,2, np. w `app/pps_results_18530C3E_with_pps.txt`, więc
+`y > 4` odrzuciłoby wszystko). Przepływ po erach: `run2_chain11_gate.txt` z kroku `gate`.
+Wyniki bez przepływu leżą w `results/archive/run2-nopass` i nie wchodzą do pracy.
 
 ## Kampania
 
@@ -349,7 +268,7 @@ Z tego wynikają dwa zastrzeżenia do interpretacji:
 - W T2 jednostka pracy (`ds_x1`, 0.24–0.52 s pętli na wątek) jest mniejsza niż koszt budowy
   drzewa w wątku, więc dopasowane 75–81 ms/wątek to głównie ten narzut. T2S powtarza T2 na
   kopiach slim i oddziela skalowanie samej pracy od szerokości pliku. Brakujące kopie
-  (`ds_xN_slim.root`, dla list `weak_N_slim.txt`) tworzy `make_slim.py` przed rozgrzaniem cache.
+  (`ds_xN_slim.root`, dla list `weak_N_slim.txt`) tworzy `archive/make_slim.py` przed rozgrzaniem cache.
 
 T3 (pamięć) nie ma własnych biegów: każdy bieg zapisuje `peak_rss_kb` i ślad
 `rss_<label>.csv` próbkowany co 0.1 s.
@@ -422,7 +341,7 @@ potem uruchamia te same biegi, więc żaden bieg nie czyta z Lustre. Różnica w
 kampanii to koszt współdzielonego systemu plików. Skrypt przerywa, jeśli `$MEMFS` nie istnieje,
 dane się nie mieszczą albo lista `.txt` ma ścieżkę bezwzględną (wskazywałaby dalej na Lustre).
 Wyniki idą na scratch, nie do MEMFS. Każdy rekord ma pole `storage` (`lustre`/`memfs`).
-Kopie slim muszą już istnieć, czyli najpierw puść zwykłą kampanię; inaczej `make_slim.py`
+Kopie slim muszą już istnieć, czyli najpierw puść zwykłą kampanię; inaczej `archive/make_slim.py`
 zapisze je w MEMFS i znikną razem z zadaniem.
 
 ### Kampania na ~1 TB (`DATASET=big`)
@@ -431,7 +350,7 @@ Najpierw jednorazowo kopie, na węźle logowania w `tmux`/`screen` (kilkanaście
 
 ```bash
 hpc-fs                                                            # potrzeba ~1.04 TB
-bash test/make_bigset.sh --source $SCRATCH/bench/data/ds_x32.root # -> data/ds_1.root ... ds_96.root
+bash test/archive/make_bigset.sh --source $SCRATCH/bench/data/ds_x32.root # -> data/ds_1.root ... ds_96.root
 ```
 
 Potem dwa zadania, oba do `results-ares-big`:
@@ -448,7 +367,7 @@ sbatch --time=12:00:00 --dependency=afterany:<id zadania A> \
 obu naraz: dopisywałyby do tego samego `raw.jsonl` i dzieliły Lustre, a to psuje zimne odczyty.
 
 Wejście to 96 zwykłych kopii `ds_x32.root` (96 × 10.84 GB, ~1.04 TB, 1.065 mld zdarzeń), czyli
-`ds_1.root` … `ds_96.root` w tym samym `data/`. `make_bigset.sh` tylko kopiuje: 8 strumieni `cp`,
+`ds_1.root` … `ds_96.root` w tym samym `data/`. `archive/make_bigset.sh` tylko kopiuje: 8 strumieni `cp`,
 przez nazwy `.partial`, z pominięciem kopii, które już są w dobrym rozmiarze, więc przerwane
 kopiowanie wystarczy powtórzyć. Na końcu sprawdza, że wszystkie 96 ma pełny rozmiar. `df`
 sprawdza wolne miejsce, ale limit grantu pokazuje tylko `hpc-fs`. Listy nad kopiami
@@ -598,7 +517,7 @@ T1 t0” różnicę między identycznymi biegami RDF z T5 i z T1.
 
 | zmienna | domyślnie | znaczenie |
 |---|---|---|
-| `DATASET` | `synthetic` | `synthetic` (`ds_xN`), `real` (listy z `archive/make_filelists.py`) albo `big` (kopie z `make_bigset.sh`) |
+| `DATASET` | `synthetic` | `synthetic` (`ds_xN`), `real` (listy z `archive/make_filelists.py`) albo `big` (kopie z `archive/make_bigset.sh`) |
 | `DATA_DIR` | `test/data` | katalog z wejściami |
 | `DS_CORE` / `DS_IMPL` / `DS_SLIM` | zależnie od `DATASET` (tabela w „Dane”) | wejścia T1 / T4–T5 / T6 |
 | `WEAK_PATTERN` | `ds_x%s.root` / `weak_%s.txt` | wejście T2, `%s` = N |
@@ -617,7 +536,10 @@ T1 t0” różnicę między identycznymi biegami RDF z T5 i z T1.
 | `CHAIN_ARGS` | — | dodatkowe argumenty `bench_chain.py` (i `bench_pool.py`) w `strongchain`, `strong11`, `weak11`, `node11` i rozgrzewce łańcucha 11, np. `--period 2016` |
 | `SIZE_SERIES` | `1 2 4 6 8 9` | liczby kopii w `size` i `sizepy` (tylko `big`) |
 | `NODE_IMPLS` / `NODE_THREADS` | `rdf-lazy uproot-pool python-pool` / `192` | test `node11`: implementacje i liczba wątków (RDF) albo procesów (pule) |
-| `EVENT_COUNTS` | — (w `slurm_run3.sbatch`: `data3-full/local.csv`) | CSV z `archive/inventory_files.py`: liczba zdarzeń z niego zamiast otwierania każdego pliku w `setup` (~5 min na bieg przy 1453 plikach); gdy pliku w nim brak, pliki są otwierane jak dotąd |
+| `REPEATS_NODE` | `1` (w `slurm_run3.sbatch`: `3`) | biegi każdej implementacji w `node11`; po timeoucie (kod 124) kolejne biegi tej implementacji są pomijane |
+| `POOL_CHUNK_EVENTS` | `250000` | zdarzeń na zadanie puli (`bench_pool.py --chunk-events`); `0` = cały plik na zadanie |
+| `STEPS` | `gate gate3 J1 J3 R J4` | tylko `slurm_final.sbatch`: które kroki ostatecznej kampanii, w tej kolejności |
+| `EVENT_COUNTS` | — (w `slurm_run3.sbatch`: `data3/local.csv`) | CSV z `archive/inventory_files.py`: liczba zdarzeń do rekordu (`n_events`, `events_per_s`), czytana po mierzonych fazach, zamiast otwierania każdego pliku po każdym biegu; implementacje dostają tylko listę plików, a pule (`bench_pool.py`) liczą zdarzenia same, w swoim `setup` |
 | `BIG_COPIES` / `IMPL_COPIES` | `96` / `9` | ile kopii `ds_N.root` ma `lists/core.txt` / `lists/impl.txt` (tylko `big`) |
 | `RESUME` | — | `1` dopisuje do `raw.jsonl` i pomija biegi, które są już `ok` |
 | `REPEATS_STRONG` / `_WEAK` / `_QSTRUCT` / `_IMPL` / `_SLIM` | `5` / `3` / `2` / `3` / `3` | powtórzenia (mediana, wąsy min–max) |

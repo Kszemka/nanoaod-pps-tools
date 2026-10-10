@@ -14,7 +14,7 @@
 # Not hadd: merging 1 TB into one file would take hours and produce a file whose cluster
 # boundaries no longer match the source's. `cp` keeps both the clustering and the codec.
 #
-#   ./test/make_bigset.sh --source $SCRATCH/bench/data/ds_x32.root [--copies 96] [--jobs 8]
+#   ./test/archive/make_bigset.sh --source $SCRATCH/bench/data/ds_x32.root [--copies 96] [--jobs 8]
 #
 # Copies go through a .partial name and are skipped if they already exist at the right size, so
 # an interrupted run can simply be repeated.

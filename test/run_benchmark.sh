@@ -6,7 +6,7 @@
 #   DATASET=synthetic (default)  the ds_x1..ds_x32 series: N copies of examples/test.root
 #   DATASET=real                 Tier0 NanoAOD as .txt file lists from archive/make_filelists.py
 #   DATASET=big                  ~1 TB: ds_1..ds_96.root, plain copies of ds_x32.root from
-#                                make_bigset.sh, one repeat each, read cold (COLD=1); T1/T2 on
+#                                archive/make_bigset.sh, one repeat each, read cold (COLD=1); T1/T2 on
 #                                up to 1 TB, T4 on ~100 GB and the size series (TESTS)
 #
 # TESTS selects the experiments; ONLY_USED=1 additionally drops the implementations no figure
@@ -106,7 +106,7 @@ RUN_TIMEOUT="${RUN_TIMEOUT:-2400}"
 SAMPLE_INTERVAL="${SAMPLE_INTERVAL:-0.1}"
 # COLD=1 drops the inputs' pages from the page cache before every run, so each run reads them
 # from the file system instead of from RAM. Only meaningful on a set of distinct files: see
-# make_bigset.sh for why the 1 TB input is copies rather than one file named many times.
+# archive/make_bigset.sh for why the 1 TB input is copies rather than one file named many times.
 COLD="${COLD:-}"
 # ONLY_USED=1 runs just the implementations that end up in a figure or a number in the thesis.
 ONLY_USED="${ONLY_USED:-}"
@@ -169,6 +169,8 @@ done
 NODE_IMPLS="${NODE_IMPLS:-rdf-lazy uproot-pool python-pool}"
 NODE_THREADS="${NODE_THREADS:-192}"
 REPEATS_NODE="${REPEATS_NODE:-1}"
+# Entries per task of the pools (bench_pool.py --chunk-events); 0 gives one task per file.
+POOL_CHUNK_EVENTS="${POOL_CHUNK_EVENTS:-250000}"
 for impl in $NODE_IMPLS; do
     case "$impl" in
         rdf-lazy|uproot-pool|python-pool) ;;
@@ -217,7 +219,7 @@ case "$DATASET" in
         WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32 48}"
         ;;
     big)
-        # ds_1.root .. ds_$BIG_COPIES.root in DATA_DIR, from make_bigset.sh. The lists over
+        # ds_1.root .. ds_$BIG_COPIES.root in DATA_DIR, from archive/make_bigset.sh. The lists over
         # them are written below into lists/, so the layout is the same as `real` and nothing
         # further down has to know which of the two it is running on.
         # The slim set's build job writes copies.txt: its count comes from a measurement.
@@ -382,7 +384,7 @@ for input in "${INPUTS[@]}"; do
     done < <(list_files "$input")
 done
 if [[ "$missing" -ne 0 && "$DATASET" == big ]]; then
-    echo "       Make the copies first: bash test/make_bigset.sh --source $DATA_DIR/ds_x32.root" \
+    echo "       Make the copies first: bash test/archive/make_bigset.sh --source $DATA_DIR/ds_x32.root" \
         "--copies $BIG_COPIES" >&2
 fi
 [[ "$missing" -eq 0 || -n "${DRY_RUN:-}" ]] || exit 1
@@ -533,7 +535,7 @@ PYEOF
 
 # --exclusive reserves the node, not the filesystem: the inputs are tens of GB on shared Lustre,
 # so without this the first run on each file carries a cold read. Reading the whole files
-# (rather than running one benchmark) warms every branch the tests touch. make_slim.py writes
+# (rather than running one benchmark) warms every branch the tests touch. archive/make_slim.py writes
 # through .partial names, so an existing slim input is always a complete one.
 SLIM_INPUTS=()
 if has_test slim || has_test weakslim; then
@@ -545,14 +547,15 @@ fi
 if [[ -z "${DRY_RUN:-}" ]] && { has_test slim || has_test weakslim; }; then
     if [[ ! -f "$DS_SLIM" ]]; then
         echo "=== writing $(basename "$DS_SLIM") ==="
-        "$PY" "$TEST_DIR/make_slim.py" --input "$DS_CORE" --output "$DS_SLIM" || exit 1
+        PYTHONPATH="$TEST_DIR${PYTHONPATH:+:$PYTHONPATH}" "$PY" "$TEST_DIR/archive/make_slim.py" \
+            --input "$DS_CORE" --output "$DS_SLIM" || exit 1
     fi
     for n in $WEAK_SERIES; do
         slim_input="$(weak_slim_input "$n")"
         if [[ ! -f "$slim_input" ]]; then
             echo "=== writing $(basename "$slim_input") ==="
-            "$PY" "$TEST_DIR/make_slim.py" --input "$(weak_input "$n")" --output "$slim_input" \
-                || exit 1
+            PYTHONPATH="$TEST_DIR${PYTHONPATH:+:$PYTHONPATH}" "$PY" "$TEST_DIR/archive/make_slim.py" \
+                --input "$(weak_input "$n")" --output "$slim_input" || exit 1
         fi
     done
 fi
@@ -673,19 +676,30 @@ fi
 # threads for RDataFrame, a pool of single-threaded processes over the files for uproot and
 # Python. The rdf-lazy run repeats a strong11 point, as a control taken next to the pools.
 # Repeats are the outer loop, so a slow stretch of Lustre lands on every implementation once.
+# A run that hit RUN_TIMEOUT (exit 124, in this job or one before it) is not repeated: the
+# next one would take as long and end the same way.
+node_timed_out() {
+    grep -sqE "\"label\":\"r[0-9]+_node_chain11_$1_t$2\",\"status\":\"failed\",\"exit_code\":124," \
+        "$RAW"
+}
 if has_test node11; then
-echo "=== whole node, 11-filter chain, on $(basename "$DS_CORE"): $NODE_IMPLS x $NODE_THREADS, $REPEATS_NODE repeat(s) ==="
+echo "=== whole node, 11-filter chain, on $(basename "$DS_CORE"): $NODE_IMPLS x $NODE_THREADS, $REPEATS_NODE repeat(s), pool chunks of $POOL_CHUNK_EVENTS ==="
 for repeat in $(seq 1 "$REPEATS_NODE"); do
     for impl in $NODE_IMPLS; do
         for threads in $NODE_THREADS; do
+            label="r${repeat}_node_chain11_${impl}_t${threads}"
+            if ! grep -Fxq "$label" "$DONE_LABELS" && node_timed_out "$impl" "$threads"; then
+                echo "  == $label (an earlier run of $impl timed out, skipped)"
+                continue
+            fi
             if [[ "$impl" == rdf-lazy ]]; then
-                run_one "r${repeat}_node_chain11_${impl}_t${threads}" bench_chain.py \
+                run_one "$label" bench_chain.py \
                     --input "$DS_CORE" --impl rdf-lazy --chain long --threads "$threads" \
                     ${chain_args[@]+"${chain_args[@]}"}
             else
-                run_one "r${repeat}_node_chain11_${impl}_t${threads}" bench_pool.py \
+                run_one "$label" bench_pool.py \
                     --input "$DS_CORE" --impl "$impl" --chain long --threads "$threads" \
-                    ${chain_args[@]+"${chain_args[@]}"}
+                    --chunk-events "$POOL_CHUNK_EVENTS" ${chain_args[@]+"${chain_args[@]}"}
             fi
         done
     done

@@ -54,7 +54,7 @@ for ((i = 1; i <= 96; i++)); do
 done
 if [[ "$CONTROL" == 1 && "$missing" -ne 0 ]]; then
     echo "ERROR: $missing of ds_1..ds_96.root missing in $SYNTH_DIR (the control set)." >&2
-    echo "       Make them first: bash test/make_bigset.sh --source $SYNTH_DIR/ds_x32.root" >&2
+    echo "       Make them first: bash test/archive/make_bigset.sh --source $SYNTH_DIR/ds_x32.root" >&2
     echo "       or skip the control points: CONTROL=0" >&2
     exit 1
 fi

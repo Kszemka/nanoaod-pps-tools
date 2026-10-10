@@ -47,9 +47,13 @@ def _check_file(path, rp_id, period):
         return None, str(exc).splitlines()[0] if str(exc) else type(exc).__name__
 
 
+def _check_task(task):
+    path, rp_id, period = task
+    return path, _check_file(path, rp_id, period)
+
+
 def main():
     import multiprocessing
-    from concurrent.futures import ProcessPoolExecutor, as_completed
 
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -60,6 +64,8 @@ def main():
     args = parser.parse_args()
     rp_id = bc.PERIODS[args.period]["rp_id"]
     steps = ["all"] + bc.LONG_CHAIN_STEPS
+    # First line of the output: slurm_final.sbatch reruns a saved gate whose cuts differ.
+    print(f"chain_cuts: {bc.chain_cuts(args.period, rp_id)}", flush=True)
 
     with open(args.inventory) as f:
         rows = [r for r in csv.DictReader(f)
@@ -83,11 +89,13 @@ def main():
     rows.sort(key=lambda r: -int(r["size_bytes"]))
     results = {}
     context = multiprocessing.get_context("spawn")
-    with ProcessPoolExecutor(max_workers=max(1, args.jobs), mp_context=context) as pool:
-        futures = {pool.submit(_check_file, r["path"], rp_id, args.period): r for r in rows}
-        for done, future in enumerate(as_completed(futures), 1):
-            path = futures[future]["path"]
-            results[path] = future.result()
+    # Every file JITs its own filters and Cling never frees them: replace workers every few files.
+    # Not ProcessPoolExecutor(max_tasks_per_child=...): on Python 3.11 it hangs at the first
+    # replacement.
+    tasks = [(r["path"], rp_id, args.period) for r in rows]
+    with context.Pool(max(1, args.jobs), maxtasksperchild=25) as pool:
+        for done, (path, result) in enumerate(pool.imap_unordered(_check_task, tasks), 1):
+            results[path] = result
             print(f"[{done}/{len(rows)}] {path}", file=sys.stderr, flush=True)
 
     groups = defaultdict(lambda: {"files": 0, "none_left": 0, "counts": [0] * len(steps)})

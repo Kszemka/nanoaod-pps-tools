@@ -61,7 +61,7 @@ def eligible(rows, args):
     for row in rows:
         if row.get("missing_columns"):
             continue
-        if row["pps_fraction"] is None or row["pps_fraction"] < args.min_pps:
+        if args.min_pps > 0 and (row["pps_fraction"] is None or row["pps_fraction"] < args.min_pps):
             continue
         if args.run and str(row.get("run")) != str(args.run):
             continue

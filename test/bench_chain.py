@@ -52,7 +52,6 @@ def main():
 
     with bench.phase("setup"):
         bc.setup_root(args.threads)
-        n_events = bc.count_events(args)
         if args.impl != "uproot":
             df = bc.make_dataframe(args)
 
@@ -87,9 +86,11 @@ def main():
                                               args.period)
 
     bench.record["event_loops"] = result["event_loops"]
+    # Only for the record's events and throughput, after the timed phases: the implementations
+    # get nothing but the file list.
     bench.finish(
         {"events_passed": result["final"], "intermediate": result["intermediate"]},
-        n_events=n_events,
+        n_events=bc.count_events(args),
     )
 
 

@@ -34,5 +34,5 @@ COPY_JOBS="${COPY_JOBS:-8}"
 
 echo "=== $(hostname): $COPIES copies of $SOURCE, $COPY_JOBS at a time [$(date +%H:%M:%S)]"
 start=$SECONDS
-bash "$REPO/test/make_bigset.sh" --source "$SOURCE" --copies "$COPIES" --jobs "$COPY_JOBS"
+bash "$REPO/test/archive/make_bigset.sh" --source "$SOURCE" --copies "$COPIES" --jobs "$COPY_JOBS"
 echo "=== done in $(((SECONDS - start) / 60)) min [$(date +%H:%M:%S)]"

@@ -1,0 +1,4 @@
+set,test,events,input_tb,codec,branches,baskets_per_file,read_gb,read_pct,loop_s_t1,loop_min_s,threads_at_min,max_speedup,plateau_threads,efficiency_96,mb_per_thread,gb_per_s_at_min,events_passed,loop_stat
+Run 2 Open Data,chain11,1046083309,1.03922,LZMA:9,1347,498579,6.82005,0.65627,985.082,11.9593,192,82.3698,176,0.653653,53.5522,0.608109,20246585,best
+"Run 3, cuts of the artificial files",chain11,1.2934e+09,1.77014,LZMA:9,1984,163955,53.1425,3.00216,3701.62,43.3536,160,85.3821,160,0.722354,63.7225,1.22579,139482626,median
+"artificial, slim files",chain11,2.98325e+10,1.54433,,,,1544.62,100.019,30850.8,333.865,176,92.405,160,0.692834,16.1419,4.62939,4658282496,median

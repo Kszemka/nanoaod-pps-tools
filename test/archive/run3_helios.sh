@@ -14,17 +14,17 @@
 #
 # Takes seconds; run it on the login node from the repository on scratch.
 #
-#   bash test/run3_helios.sh                    # J1 and J2
-#   bash test/run3_helios.sh --from J1          # J1-J4
-#   bash test/run3_helios.sh --from J3          # J3 and J4
-#   bash test/run3_helios.sh --only J4          # one job
-#   bash test/run3_helios.sh --after 1234567    # the first one waits for job 1234567 too
-#   TIME_J1=24:00:00 bash test/run3_helios.sh   # a longer limit for one job
-#   bash test/run3_helios.sh --dry-run          # print the sbatch commands only
+#   bash test/archive/run3_helios.sh                    # J1 and J2
+#   bash test/archive/run3_helios.sh --from J1          # J1-J4
+#   bash test/archive/run3_helios.sh --from J3          # J3 and J4
+#   bash test/archive/run3_helios.sh --only J4          # one job
+#   bash test/archive/run3_helios.sh --after 1234567    # the first one waits for job 1234567 too
+#   TIME_J1=24:00:00 bash test/archive/run3_helios.sh   # a longer limit for one job
+#   bash test/archive/run3_helios.sh --dry-run          # print the sbatch commands only
 
 set -euo pipefail
 
-cd "$(dirname "${BASH_SOURCE[0]}")/.."
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 
 ALL=(J1 J2 J3 J4)
 DEFAULT=(J1 J2)
