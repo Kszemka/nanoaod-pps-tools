@@ -3,8 +3,8 @@
 # Grid tools for reading CMS data from DAS over xrootd (AAA): voms-proxy-*, xrdcp/xrdfs,
 # dasgoclient, the IGTF CA certificates and the VOMS configuration of the cms VO.
 #
-#   bash test/grid_env.sh --install     # once, on the login node: whatever CVMFS does not give
-#   source test/grid_env.sh             # every time: exports the paths, installs nothing
+#   bash test/archive/grid_env.sh --install     # once, on the login node: whatever CVMFS does not give
+#   source test/archive/grid_env.sh             # every time: exports the paths, installs nothing
 #
 # Sources, first one found:
 #   CA certificates   /cvmfs/grid.cern.ch/etc/grid-security/certificates, else ca-policy-lcg in
@@ -101,7 +101,7 @@ grid_report() {
         if command -v "$tool" >/dev/null; then
             echo "  $tool: $(command -v "$tool")"
         else
-            echo "  $tool: MISSING (bash test/grid_env.sh --install)"
+            echo "  $tool: MISSING (bash test/archive/grid_env.sh --install)"
             missing=1
         fi
     done
@@ -110,7 +110,7 @@ grid_report() {
         if [[ -n "${!var:-}" && -d "${!var}" ]]; then
             echo "  $var=${!var}"
         else
-            echo "  $var: MISSING (bash test/grid_env.sh --install)"
+            echo "  $var: MISSING (bash test/archive/grid_env.sh --install)"
             missing=1
         fi
     done

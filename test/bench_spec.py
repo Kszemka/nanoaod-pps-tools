@@ -8,6 +8,7 @@ the worker processes of bench_pool.py: an uproot worker that imported ROOT only 
 chain would carry ~0.3 GB it never uses, 192 times over, and charge it to uproot.
 """
 
+import glob
 import operator
 import os
 import sys
@@ -24,7 +25,8 @@ DEFAULT_POT = "box"
 # Filter chain for TEST 2, in order -- the notebook's rdata_analysis() chain, with its
 # nPPSLocalTrack > 0 baseline as an explicit first step so --chain-len sweeps the whole thing.
 CHAIN_STEPS = ["pps", "double_arm", "diamond", "rp_id", "xi"]
-# The 1 TB campaign's chain: five cuts on further PPS columns and one on
+# The 1 TB campaign's chain, also built cut for cut by the notebook's "Benchmark chain" cell
+# from PERIODS below: five cuts on further PPS columns and one on
 # PPSLocalTrack_multiRPProtonIdx, which is there because rp_id reads PPSLocalTrack_decRPId a
 # second time, then the five steps above -- eleven filters over ten distinct branches. The added
 # steps come first, weakest cut first, because after the five steps above they pass every event
@@ -126,14 +128,21 @@ def is_file_list(path):
     return path.endswith(".txt")
 
 
+def is_glob(path):
+    return any(c in path for c in "*?[")
+
+
 def input_files(path):
     """
-    The .root files behind --input: the file itself, or the entries of a .txt list.
+    The .root files behind --input: the file itself, the files a wildcard pattern matches
+    (sorted), or the entries of a .txt list.
 
     Relative entries resolve against the list's own directory, so a list written next to the
     data stays valid wherever the data directory is mounted. Blank lines and # comments are
     skipped.
     """
+    if is_glob(path):
+        return sorted(glob.glob(path))
     if not is_file_list(path):
         return [path]
     base = os.path.dirname(os.path.abspath(path))

@@ -297,10 +297,15 @@ if [[ "$DATASET" == big && -z "${DRY_RUN:-}" ]]; then
     echo "lists: $DATA_DIR/lists (core $BIG_COPIES, impl $IMPL_COPIES, weak ${WEAK_UNIT}N, size N copies)"
 fi
 
-# The .root files behind an input: the file itself, or a list's entries with relative paths
-# resolved against the list's directory (the rule bench_common.input_files applies).
+# The .root files behind an input: the file itself, the files a wildcard pattern matches, or a
+# list's entries with relative paths resolved against the list's directory (the rule
+# bench_common.input_files applies).
 list_files() {
     local path="$1" base line
+    if [[ "$path" == *[*?[]* ]]; then
+        "$PY" -c 'import glob, sys; print("\n".join(sorted(glob.glob(sys.argv[1]))))' "$path"
+        return
+    fi
     if [[ "$path" != *.txt ]]; then
         echo "$path"
         return
@@ -361,9 +366,11 @@ fi
 # Every experiment needs its files, and a missing weak-scaling point would otherwise just
 # vanish from the curve.
 INPUTS=("$DS_CORE" "$DS_IMPL")
-for n in $WEAK_SERIES; do
-    INPUTS+=("$(weak_input "$n")")
-done
+if has_test weak || has_test weak11 || has_test weakslim; then
+    for n in $WEAK_SERIES; do
+        INPUTS+=("$(weak_input "$n")")
+    done
+fi
 if has_test size || has_test sizepy; then
     for n in $SIZE_SERIES; do
         INPUTS+=("$(size_input "$n")")
@@ -371,6 +378,13 @@ if has_test size || has_test sizepy; then
 fi
 missing=0
 for input in "${INPUTS[@]}"; do
+    if [[ "$input" == *[*?[]* ]]; then
+        if [[ -z "$(list_files "$input" | head -1)" ]]; then
+            echo "ERROR: no file matches $input" >&2
+            missing=1
+        fi
+        continue
+    fi
     if [[ ! -f "$input" ]]; then
         echo "ERROR: missing $input" >&2
         missing=1

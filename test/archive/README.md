@@ -29,6 +29,7 @@ git mv test/archive/opendata_helios.sh test/archive/slurm_fetch_opendata.sbatch 
 | `slurm_fetch_das.sbatch` | DAS | Run 3 z DAS do `data3`: kontrole proxy i kwoty, indeks, pobranie przez AAA, weryfikacja, listy, `READY` |
 | `slurm_slim11_build.sbatch` | slim11 | zadanie 0 kampanii „Łańcuch 11 filtrów na 1 TB” (`test/README.md`): zbiór z 10 gałęziami łańcucha |
 | `plot_memory_compare.py` | pliki pełne vs slim | szczytowa pamięć względem liczby wątków dla dwóch zbiorów na jednym rysunku |
+| `scan_eos_list.py` | Run 3 z EOS | na lxplus, bez repo (sam ROOT z LCG): próbka datasetów, zdarzenia, PPS i łańcuch 11 filtrów przez xrootd, ranking, odsianie pustych, większa `run3_sizes.txt` |
 | `fetch_eos.sh` | Run 3 z EOS | Run 3 z EOS do `data3`: rsync po SSH przez lxplus, ręcznie w `tmux` (kod OTP na połączenie), 9 strumieni, rozmiary |
 | `grid_env.sh` | Run 3 z EOS, DAS | ścieżki do env `pps-grid` (dla EOS: `kinit`); `--install` raz, `--check` pokazuje, skąd co jest |
 | `slurm_fetch_eos.sbatch` | Run 3 z EOS | po `fetch_eos.sh`: rozmiary, inwentaryzacja, łańcuch na każdym pliku, listy (przeplecione, zagnieżdżone), `READY` |
@@ -229,16 +230,16 @@ układzie `<era>/<PD>/<plik>` jak Open Data, i buduje z nich listy benchmarku. T
 publiczne: potrzebny jest certyfikat grid w `~/.globus`, członkostwo w VO `cms` i proxy VOMS.
 Domyślny okres `--period 2023` to układ PPS z Run 3, więc łańcuch działa na nich bez zmian.
 
-**Raz, na węźle logowania:** `bash test/grid_env.sh --install`. Co daje CVMFS (CA, vomses,
+**Raz, na węźle logowania:** `bash test/archive/grid_env.sh --install`. Co daje CVMFS (CA, vomses,
 `dasgoclient`), bierze stamtąd. Resztę instaluje: env `pps-grid` z conda-forge (`voms`, `xrootd`,
 `ca-policy-lcg`), vomses VO `cms` w `~/.voms` i `dasgoclient` z GitHuba do `$SCRATCH/bench/bin`.
-`pps-bench` się nie zmienia. `bash test/grid_env.sh --check` pokazuje, skąd co jest.
+`pps-bench` się nie zmienia. `bash test/archive/grid_env.sh --check` pokazuje, skąd co jest.
 
 **Przed każdym pobraniem, na węźle logowania** (`voms-proxy-init` pyta o hasło do klucza,
 którego żaden skrypt nie przechowuje):
 
 ```bash
-source test/grid_env.sh
+source test/archive/grid_env.sh
 chmod 400 ~/.globus/userkey.pem; chmod 644 ~/.globus/usercert.pem
 openssl x509 -in ~/.globus/usercert.pem -noout -text \
     | grep -E 'Not After|Public-Key|Signature Algorithm|Issuer|Subject:'
@@ -254,10 +255,10 @@ logowania nie jest widoczny na węzłach obliczeniowych.
 **Zadanie:**
 
 ```bash
-sbatch --export=ALL,LIST_ONLY=1 test/slurm_fetch_das.sbatch    # co jest w DAS, co wybrane, co na taśmie
-sbatch test/slurm_fetch_das.sbatch                             # ~1 TB (MAX_GB=1040)
-sbatch --export=ALL,MAX_GB=4000 test/slurm_fetch_das.sbatch    # potem więcej, ten sam katalog
-sbatch --export=ALL,CAMPAIGNS=22Sep2023 test/slurm_fetch_das.sbatch   # wybrana kampania
+sbatch --export=ALL,LIST_ONLY=1 test/archive/slurm_fetch_das.sbatch    # co jest w DAS, co wybrane, co na taśmie
+sbatch test/archive/slurm_fetch_das.sbatch                             # ~1 TB (MAX_GB=1040)
+sbatch --export=ALL,MAX_GB=4000 test/archive/slurm_fetch_das.sbatch    # potem więcej, ten sam katalog
+sbatch --export=ALL,CAMPAIGNS=22Sep2023 test/archive/slurm_fetch_das.sbatch   # wybrana kampania
 ```
 
 - **Krok 0, kontrole:** zadanie przerywa się, zanim cokolwiek pobierze, jeśli:
@@ -329,8 +330,8 @@ rozmiar klastrów. Oba są w kolumnach `compression` i `events_per_cluster` inwe
 source /cvmfs/sft.cern.ch/lcg/views/LCG_105/x86_64-el9-gcc12-opt/setup.sh
 git clone <repo-url> nanoaod-pps-tools && cd nanoaod-pps-tools
 ls /eos/cms/store/backfill/1/data/Tier0_REPLAY_2023/ | head     # sprawdź prefiks
-python test/inventory_files.py --list files.txt --prefix /eos/cms/store --output inventory_lxplus.csv
-python test/make_filelists.py --inventory inventory_lxplus.csv --run 369998 \
+python test/archive/inventory_files.py --list files.txt --prefix /eos/cms/store --output inventory_lxplus.csv
+python test/archive/make_filelists.py --inventory inventory_lxplus.csv --run 369998 \
     --version PromptReco-v21141959 --transfer-list transfer.txt --strip-prefix /eos/cms/store
 ```
 
@@ -368,9 +369,9 @@ Ten wariant spłaszcza strukturę katalogów, co niczemu nie szkodzi, bo nazwy p
 ```bash
 cd $SCRATCH/bench/real
 find $PWD -name '*.root' -not -path '*/slim/*' > ares_files.txt
-python $SCRATCH/bench/nanoaod-pps-tools/test/inventory_files.py --list ares_files.txt \
+python $SCRATCH/bench/nanoaod-pps-tools/test/archive/inventory_files.py --list ares_files.txt \
     --output inventory_ares.csv --compare inventory_lxplus.csv
-python $SCRATCH/bench/nanoaod-pps-tools/test/make_filelists.py --inventory inventory_ares.csv \
+python $SCRATCH/bench/nanoaod-pps-tools/test/archive/make_filelists.py --inventory inventory_ares.csv \
     --run 369998 --version PromptReco-v21141959
 ```
 
@@ -418,11 +419,11 @@ nie przechowuje):
 
 ```bash
 tmux new -s run3
-cd $SCRATCH/bench/nanoaod-pps-tools && source test/grid_env.sh
+cd $SCRATCH/bench/nanoaod-pps-tools && source test/archive/grid_env.sh
 export KRB5_CONFIG=~/.krb5/krb5.conf KRB5CCNAME=FILE:$HOME/.krb5/cc_cern
 kinit -f -l 25h -r 7d <login-cern>@CERN.CH && chmod 600 ~/.krb5/cc_cern
-bash test/fetch_eos.sh                    # Ctrl-b d odłącza, tmux attach -t run3 wraca
-sbatch test/slurm_fetch_eos.sbatch        # po „done”
+bash test/archive/fetch_eos.sh            # Ctrl-b d odłącza, tmux attach -t run3 wraca
+sbatch test/archive/slurm_fetch_eos.sbatch   # po „done”
 ```
 
 - **Pobranie:** `CONNECTIONS` (3) połączeń SSH po `JOBS_PER_CONN` (3) rsynców, czyli 9 strumieni.
@@ -440,8 +441,48 @@ sbatch test/slurm_fetch_eos.sbatch        # po „done”
   plików, z których po łańcuchu zostaje mniej niż `MIN_PASSED` (1) zdarzeń, pliki przeplecione
   tak, że każdy początek listy ma skład całości po erze i PD), `weak_N.txt` (N/96 zbioru,
   N = 1 … 96) i `impl.txt` (~11 M) jako kolejne początki `core.txt` i `sets.json`.
-- **Więcej danych:** większa lista na lxplus, `fetch_eos.sh` jeszcze raz, usunąć `local.csv`,
+- **Więcej danych:** większą listę robi `scan_eos_list.py` na lxplus (opis w nagłówku pliku:
+  `sample`, `scan`, `rank`, `scan --no-chain`, `write`), potem `fetch_eos.sh` jeszcze raz, usunąć `local.csv`,
   `chain11_check.txt`, `chain11_files.csv`, `sets.json` i `READY`, wysłać zadanie.
+- **Wszystkie pobrane pliki naraz (`INPUT_GLOB`):** bez list. J1 podaje wzorzec `*.root`
+  prosto do `RDataFrame`, które otwiera wszystkie pasujące pliki. Gdy pobieranie zatrzymano
+  w połowie (`Ctrl-c` w `tmux`, potem `ps -u $USER | grep -c '[r]sync'` ma dać 0), pliki urwane
+  przez rsync (`--partial` zostawia je pod docelową nazwą) trzeba wynieść poza wzorzec, do
+  `data3/partial/`:
+
+  ```bash
+  cd $SCRATCH/bench/data3
+  python3 - <<'EOF'
+  import os
+  for line in open("run3_sizes.txt"):
+      path, size = line.split()
+      local = path.replace("/eos/cms/store/", "", 1)
+      if os.path.exists(local) and os.path.getsize(local) != int(size):
+          os.makedirs(os.path.dirname("partial/" + local), exist_ok=True)
+          os.rename(local, "partial/" + local)
+          print("moved", local)
+  EOF
+  ```
+
+  Strong scaling na `plgrid-now`, do nowego katalogu (stary pominąłby zmierzone punkty,
+  `RESUME=1`). 1–64 wątki raz, 80–192 trzy razy (r2 i r3 po całym przebiegu): tam przebieg
+  trwa ~2,5 min i rozrzut między powtórzeniami (3–14% na 1,8 TB) jest rzędu szukanych różnic.
+  Razem ~8 h; `STRONG11_R2_THREADS= STRONG11_R3_THREADS=` wyłącza powtórzenia (~7 h).
+
+  ```bash
+  cd $SCRATCH/bench/nanoaod-pps-tools
+  INPUT_GLOB="$SCRATCH/bench/data3/data/*/*/NANOAOD/*/*/*.root" \
+  RESULTS=$SCRATCH/bench/results-helios-run3-4tb-chain11 \
+  sbatch --partition=plgrid-now --time=12:00:00 --export=ALL,JOB=J1 test/slurm_run3.sbatch
+  ```
+
+  Przed pomiarami zadanie sprawdza, że ROOT rozwija wzorzec do tych samych plików co `glob`
+  Pythona i że żaden nie jest urwany (rozmiary z `run3_sizes.txt`), potem pisze
+  `inventory.csv` do `RESULTS` (zdarzenia każdego pliku do rekordów, bez otwierania plików po
+  każdym przebiegu). Kończy się błędem, gdy któryś plik się nie otwiera albo nie ma kolumn
+  łańcucha. W logu `chain11 branches: ... GB compressed` to skompresowany rozmiar dziesięciu
+  gałęzi łańcucha (`chain_zip_bytes`), czyli tyle, ile łańcuch przeczyta. Sondy na `impl.txt`
+  nie ma; `RUN_TIMEOUT` to 6 h na przebieg.
 
 ## Uruchomienie na Heliosie (192 rdzenie)
 

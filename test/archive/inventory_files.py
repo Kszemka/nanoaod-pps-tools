@@ -14,22 +14,24 @@ Per file:
                                        files with different values cannot share a TChain safely
   compression                          file-level codec, e.g. "2:9" = LZMA level 9
   missing_columns                      benchmark columns absent from the file
+  chain_zip_bytes                      compressed bytes of the ten branches of the 11-filter
+                                       chain, from metadata: what the chain reads of the file
   pps_fraction, rp_fraction            events with nPPSLocalTrack > 0, and with a track in the
                                        benchmark's default RP; one event loop over two small
                                        branches, skipped with --no-loop
 
   lxplus:  source /cvmfs/sft.cern.ch/lcg/views/LCG_105/x86_64-el9-gcc12-opt/setup.sh
-           python test/inventory_files.py --list files.txt --prefix /eos/cms/store \\
+           python test/archive/inventory_files.py --list files.txt --prefix /eos/cms/store \\
                --output inventory_lxplus.csv
   Ares:    find $SCRATCH/bench/real -name '*.root' -not -path '*/slim/*' > ares_files.txt
-           python test/inventory_files.py --list ares_files.txt --output inventory_ares.csv \\
+           python test/archive/inventory_files.py --list ares_files.txt --output inventory_ares.csv \\
                --compare inventory_lxplus.csv
 
 The list may also hold remote URLs (root://, https://), e.g. the CERN Open Data files from
 archive/opendata_index.py: each file is then opened over the network and only its metadata and the two
 PPS branches are read, a few percent of its size. --jobs N describes N files at a time.
 
-  Open Data: python test/inventory_files.py --list scan.txt --output remote.csv --jobs 8
+  Open Data: python test/archive/inventory_files.py --list scan.txt --output remote.csv --jobs 8
 """
 
 import argparse
@@ -48,7 +50,7 @@ ROOT = bc.ROOT
 FIELDS = [
     "name", "path", "era", "primary_dataset", "version", "run", "size_bytes", "entries",
     "clusters", "events_per_cluster", "n_branches", "schema", "compression",
-    "missing_columns", "pps_fraction", "rp_fraction", "error",
+    "missing_columns", "chain_zip_bytes", "pps_fraction", "rp_fraction", "error",
 ]
 
 STORE_PATH = re.compile(
@@ -106,6 +108,9 @@ def describe(path, rp_id, with_loop):
     )
     missing = [c for c in benchmark_columns() if c not in set(branches)]
     row["missing_columns"] = " ".join(missing)
+    zip_bytes = layout["zip_bytes"]
+    row["chain_zip_bytes"] = sum(zip_bytes.get(c, 0)
+                                 for c in bc.chain_columns(len(bc.LONG_CHAIN_STEPS), "long"))
 
     if with_loop and not missing and layout["entries"]:
         df = ROOT.RDataFrame("Events", path)
@@ -174,7 +179,10 @@ def summarise(rows):
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--list", required=True, help="text file, one path per line")
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--list", help="text file, one path per line")
+    source.add_argument("--input", help="a .root file, a wildcard pattern or a .txt list, "
+                                        "as the benchmarks take it")
     parser.add_argument("--prefix", default="", help="joined in front of relative paths")
     parser.add_argument("--output", required=True, help="CSV to write")
     parser.add_argument("--compare", help="CSV from the other side of a transfer")
@@ -186,7 +194,10 @@ def main():
                         help="files described at a time, each in its own process")
     args = parser.parse_args()
 
-    paths = read_list(args.list, args.prefix)
+    paths = read_list(args.list, args.prefix) if args.list else bc.input_files(args.input)
+    if not paths:
+        print(f"ERROR: no file matches {args.input}", file=sys.stderr)
+        return 1
     tasks = [(path, args.rp_id, not args.no_loop) for path in paths]
     if args.jobs > 1:
         # spawn, not fork: a forked child would inherit the parent's ROOT and TBB state.

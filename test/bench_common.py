@@ -35,7 +35,7 @@ from bench_spec import (  # noqa: F401 -- re-exported, the benchmarks use bc.<na
     CHAIN_COLUMNS, CHAIN_STEPS, CHAINS, DEFAULT_ARM, DEFAULT_PERIOD, DEFAULT_POT,
     DEFAULT_RP_ID, EFFICIENCY_COLUMNS, LONG_CHAIN_STEPS, MAX_CHAIN_LEN, PERIODS, REPO_ROOT,
     TRACK_CUTS, TRACK_OPS, XI_RANGE, chain_columns, chain_cuts, chain_steps, input_files,
-    is_file_list,
+    is_file_list, is_glob,
 )
 
 import ROOT  # noqa: E402
@@ -76,13 +76,13 @@ def warmup(args, build_and_trigger, tree="Events"):
     efficiency kernel before the timed phase starts.
 
     The ds_xN series are copies of examples/test.root, so for them the small source has the
-    same column types and the warmup does not touch the multi-GB input. Real-data lists warm
-    up on their own first file instead: a different CMSSW release can store a column with a
+    same column types and the warmup does not touch the multi-GB input. Real-data lists and
+    patterns warm up on their own first file instead: a different CMSSW release can store a column with a
     different type, and a kernel compiled for the wrong types would push the real compilation
     back into the timed phases. Must run before EnableImplicitMT: Range() is not supported
     under implicit multi-threading.
     """
-    if is_file_list(args.input):
+    if is_file_list(args.input) or is_glob(args.input):
         source = input_files(args.input)[0]
     else:
         source = WARMUP_INPUT if os.path.exists(WARMUP_INPUT) else args.input
@@ -91,7 +91,8 @@ def warmup(args, build_and_trigger, tree="Events"):
 
 def tree_layout(path, tree="Events"):
     """
-    Entries, clusters, branches and file-level codec of one file, from metadata only.
+    Entries, clusters, branches, compressed bytes per branch and file-level codec of one file,
+    from metadata only.
 
     Clusters are what ImplicitMT divides the work by, so they are reported wherever a dataset
     is described. The codec matters as much: CMS production NanoAOD is commonly LZMA while the
@@ -117,6 +118,7 @@ def tree_layout(path, tree="Events"):
         "branches": [b.GetName() for b in branches],
         # Every TTree opened on the file holds these baskets' index for every branch, read or not.
         "baskets": sum(int(b.GetWriteBasket()) for b in branches),
+        "zip_bytes": {b.GetName(): int(b.GetZipBytes("*")) for b in branches},
         "compression_algorithm": int(f.GetCompressionAlgorithm()),
         "compression_level": int(f.GetCompressionLevel()),
         "size_bytes": int(f.GetSize()),
@@ -165,6 +167,9 @@ def file_entries(files, tree="Events"):
 
 
 def make_dataframe(args, tree="Events"):
+    # A pattern goes to RDataFrame as it is: ROOT expands it and opens every match.
+    if is_glob(args.input):
+        return ROOT.RDataFrame(tree, args.input)
     files = input_files(args.input)
     if len(files) == 1:
         return ROOT.RDataFrame(tree, files[0])

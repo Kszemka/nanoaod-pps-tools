@@ -8,7 +8,7 @@
 # AAA redirector), with --transport xrdcp: xrdcp then authenticates with $X509_USER_PROXY and
 # verifies against $X509_CERT_DIR (grid_env.sh, slurm_fetch_das.sbatch).
 #
-#   ./test/fetch_opendata.sh --urls urls.txt --index index.csv \
+#   ./test/archive/fetch_opendata.sh --urls urls.txt --index index.csv \
 #       [--out-dir $SCRATCH/bench/data2] [--jobs 10] [--streams 1] \
 #       [--transport xrdcp|https] [--dry-run]
 #

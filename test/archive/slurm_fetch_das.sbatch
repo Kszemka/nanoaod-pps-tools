@@ -35,10 +35,10 @@
 # downloaded stay; with a larger MAX_GB only the new ones are fetched.
 #
 # Once, on the login node (CVMFS provides what it can, the rest goes to the env pps-grid):
-#   bash test/grid_env.sh --install
+#   bash test/archive/grid_env.sh --install
 # Before every download, on the login node -- voms-proxy-init asks for the key's passphrase,
 # which no script stores:
-#   source test/grid_env.sh
+#   source test/archive/grid_env.sh
 #   chmod 400 ~/.globus/userkey.pem; chmod 644 ~/.globus/usercert.pem
 #   openssl x509 -in ~/.globus/usercert.pem -noout -text \
 #       | grep -E 'Not After|Public-Key|Signature Algorithm|Issuer|Subject:'
@@ -46,10 +46,10 @@
 #   chmod 600 ~/.x509up_cms && voms-proxy-info --all --file ~/.x509up_cms
 # --valid 48:00 covers ~1 TB with room for a resubmission; up to 192:00 for several TB.
 #
-#   sbatch --export=ALL,LIST_ONLY=1 test/slurm_fetch_das.sbatch    # what DAS has, what is chosen
-#   sbatch test/slurm_fetch_das.sbatch                             # ~1 TB
-#   sbatch --export=ALL,MAX_GB=4000 test/slurm_fetch_das.sbatch    # more, same directory
-#   sbatch --export=ALL,CAMPAIGNS=22Sep2023 test/slurm_fetch_das.sbatch
+#   sbatch --export=ALL,LIST_ONLY=1 test/archive/slurm_fetch_das.sbatch    # what DAS has, what is chosen
+#   sbatch test/archive/slurm_fetch_das.sbatch                             # ~1 TB
+#   sbatch --export=ALL,MAX_GB=4000 test/archive/slurm_fetch_das.sbatch    # more, same directory
+#   sbatch --export=ALL,CAMPAIGNS=22Sep2023 test/archive/slurm_fetch_das.sbatch
 #
 # CMS data from DAS is not public: it stays on scratch, outside the repository.
 
@@ -123,7 +123,7 @@ if [[ -f READY ]]; then
 fi
 
 echo "=== 0. checks [$(stamp)]"
-grid_report || fail "grid tools missing; run 'bash test/grid_env.sh --install' on the login node."
+grid_report || fail "grid tools missing; run 'bash test/archive/grid_env.sh --install' on the login node."
 
 proxy="$X509_USER_PROXY"
 [[ -f "$proxy" ]] || fail "no proxy at $proxy; make it on the login node (see the header)."

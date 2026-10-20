@@ -25,8 +25,8 @@ first. Muon0 and Muon1 hold different events, so both are kept.
 
 dasgoclient authenticates with $X509_USER_PROXY (grid_env.sh, slurm_fetch_das.sbatch).
 
-    python test/das_index.py index --query '/Muon*/Run2023*/NANOAOD' --out-dir .
-    python test/das_index.py select --index index.csv --max-gb 1040 \\
+    python test/archive/das_index.py index --query '/Muon*/Run2023*/NANOAOD' --out-dir .
+    python test/archive/das_index.py select --index index.csv --max-gb 1040 \\
         --era-order Run2023C Run2023D Run2023B --exclude sample.csv --output urls.txt
 """
 

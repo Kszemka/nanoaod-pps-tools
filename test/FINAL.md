@@ -29,21 +29,20 @@ theta_y,multi_proton,multi_rp_idx==-1,single_rp_idx>=0,track_x>4,track_y>0,pps,d
 a `check_chain11.py` wypisuje je w pierwszej linii, więc wyniki z innymi cięciami da się
 rozpoznać (i kroki same je odsuwają, niżej).
 
-Zbiory już zmierzone zostają: slim (`results/synthetic-slim`) i Block M
-(`results/full-chain11/artificial-1tb`) mają jeszcze `time`/`timeUnc`: tyle samo gałęzi i ta
-sama reszta łańcucha; w pracy jedno zdanie, że 2 z 10 gałęzi są tam inne. Model kosztu otwartego
-drzewa z Block M nie zależy od tego, które gałęzie są czytane.
+Zbiory już zmierzone zostają: slim (`results/synthetic-slim`) ma jeszcze `time`/`timeUnc`:
+tyle samo gałęzi i ta sama reszta łańcucha; w pracy jedno zdanie, że 2 z 10 gałęzi są tam inne.
+Block M (`results/full-chain11/artificial-1tb`) jest usunięty z pracy.
 
 ## Kroki
 
-| krok | co | wynik na `$SCRATCH/bench` | szacunek |
-|---|---|---|---|
-| `gate` | `check_chain11.py --period 2016` na każdym pliku Run 2 (`data2/local.csv`), 96 procesów | `run2_chain11_gate.{txt,status}`, `run2_chain11.csv` | ~5 min |
-| `gate3` | `check_chain11.py --period run3` na każdym pliku Run 3 (`data3/local.csv`) | `run3_chain11_gate.{txt,status}`, `run3_chain11.csv` | 5–10 min |
-| `J1` | `strong11` na Run 3 `core.txt`, `--period run3`, 1–192 wątki, 80–192 trzy razy | `results-helios-run3-chain11` | 3–4 h |
-| `J3` | `node11`: RDF na 192 wątkach i `uproot-pool` na 192 procesach, po 3 biegi | `results-helios-run3-node` | ~1 h |
-| `R` | `strong11` na Run 2 Open Data `core.txt`, `--period 2016`, jak J1 | `results-helios-run2-chain11-1tb` | ~1 h |
-| `J4` | `node11`: `python-pool` na 192 procesach, 3 biegi, każdy najwyżej 1,5 h | `results-helios-run3-node` | 1–4,5 h |
+| krok | co | wynik na `$SCRATCH/bench` | szacunek | zmierzone |
+|---|---|---|---|---|
+| `gate` | `check_chain11.py --period 2016` na każdym pliku Run 2 (`data2/local.csv`), 96 procesów | `run2_chain11_gate.{txt,status}`, `run2_chain11.csv` | ~5 min | <1 min |
+| `gate3` | `check_chain11.py --period run3` na każdym pliku Run 3 (`data3/local.csv`) | `run3_chain11_gate.{txt,status}`, `run3_chain11.csv` | 5–10 min | zawieszony (124), niżej |
+| `J1` | `strong11` na Run 3 `core.txt`, `--period run3`, 1–192 wątki, 80–192 trzy razy | `results-helios-run3-chain11` | 3–4 h | 187 min |
+| `J3` | `node11`: RDF na 192 wątkach i `uproot-pool` na 192 procesach, po 3 biegi | `results-helios-run3-node` | ~1 h | 16 min |
+| `R` | `strong11` na Run 2 Open Data `core.txt`, `--period 2016`, jak J1 | `results-helios-run2-chain11-1tb` | ~1 h | 46 min |
+| `J4` | `node11`: `python-pool` na 192 procesach, 3 biegi, każdy najwyżej 1,5 h | `results-helios-run3-node` | 1–4,5 h | 33 min |
 
 Razem ~6–9 h. R idzie tylko po `gate` z kodem 0, J1, J3 i J4 tylko po `gate3` z kodem 0. Kody
 bramki: 2 kolumna z dwoma typami, 3 plik, którego łańcuch nie przeczyta, 4 łańcuch, po którym w
@@ -56,7 +55,28 @@ timeoucie (kod 124) nie jest powtarzany, także po wznowieniu; w pracy jako doln
 
 „R na czysto”: katalog wyników R z rekordami innych cięć (stary R miał łańcuch z `time`) krok
 odsuwa jako `results-helios-run2-chain11-1tb-oldcuts-<data>` i mierzy od nowa, przy spokojnym
-Lustre, bez `--best-of`. J1 i `results-helios-run3-node` tak samo.
+Lustre. J1 i `results-helios-run3-node` tak samo.
+
+## Przebieg (październik 2026)
+
+Kampania skończona, wszystkie 79 rekordów `ok`, w każdym kroku ta sama liczba zdarzeń po
+łańcuchu (Run 3: 487 507 257, Run 2: 14 921 896).
+
+- Zadanie 24536708: `gate` z kodem 0, `gate3` zawieszony do timeoutu (124), więc J1, J3 i J4
+  pominięte; R z kodem 0 po 46 min (węzeł x1000c1s0b0n3). Zadanie kończy się zawsze kodem 0,
+  więc COMPLETED w `sacct` nie znaczy, że kroki biegły: patrz `final_progress.log`.
+- Przyczyna: `ProcessPoolExecutor(max_tasks_per_child=...)` w Pythonie 3.11 zawiesza się przy
+  pierwszej wymianie procesu. `check_chain11.py` ma teraz `multiprocessing.Pool(maxtasksperchild=25)`
+  (procesy trzeba wymieniać, bo Cling nie zwalnia skompilowanych filtrów).
+- Jako wynik `gate3` podstawiony wynik łańcucha z zadania list (`slurm_fetch_eos.sbatch`), które
+  sprawdziło te same 2488 plików z tymi samymi cięciami.
+- Zadanie 24540034: J1, J3 i J4 (węzeł x1000c7s3b0n0).
+
+`--best-of` zostaje dla Run 2: od 112 wątków powtórki rozpadają się na dwie grupy, 12,5–15,3 s
+przy 89–101 zajętych rdzeniach i 16,0–26,1 s przy 57–78, także w tym przebiegu, w którym nic
+innego nie kopiowało na Lustre. Pętla trwa kilkanaście sekund, więc jedno oczekiwanie na
+współdzielony system plików zmienia czas o połowę; najszybszy bieg mierzy koszt silnika. Powtórki
+Run 3 (pętla ~1 min) różnią się najwyżej o 14%, więc tam zostaje mediana.
 
 ## Listy Run 3 (raz, przed kampanią)
 
@@ -112,23 +132,12 @@ sbatch test/slurm_final.sbatch
 
 ## Po zadaniu
 
-Na laptopie (polecenia też w [`results/README.md`](../results/README.md)):
-
-```bash
-rsync -a helios:'$SCRATCH/bench/results-helios-run2-chain11-1tb/' results/full-chain11/run2-1tb/
-rsync -a helios:'$SCRATCH/bench/results-helios-run3-chain11/'     results/run3/chain11/
-rsync -a helios:'$SCRATCH/bench/results-helios-run3-node/'        results/run3/node/
-scp helios:'$SCRATCH/bench/run2_chain11_gate.txt' results/full-chain11/run2-1tb/
-scp helios:'$SCRATCH/bench/run3_chain11_gate.txt' results/run3/chain11/
-scp helios:'$SCRATCH/bench/final_progress.log'    results/run3/
-python test/plot_results.py --results results/run3/chain11
-python test/plot_results.py --results results/run3/node      # wykres 17: RDF / uproot / Python
-```
-
-Potem porównanie zbiorów (`plot_real_vs_synthetic.py`, bez `--best-of` dla Run 2) i Block M
-(`plot_memory_control.py`), komendy w `results/README.md`. W pracy: opis łańcucha (x, y zamiast
-czasu; zdanie o slim i Block M), J1 zamiast tymczasowego Run 3 z cięciami 2026, J3 i J4 w bloku N,
-przepływ po erach z obu bramek.
+Wszystko jest już w repozytorium: katalogi wyników w `results/full-chain11/run2-1tb`,
+`results/run3/chain11` i `results/run3/node`, bramki obok nich (`run2_chain11_gate.txt`,
+`run3_chain11_gate.txt`), log kroków w `results/run3/final_progress.log`. Wykresy i porównanie zbiorów (`plot_real_vs_synthetic.py`: Run 2, Run 3 i slim na jednym
+rysunku, z `--best-of` dla Run 2) są zrobione i skopiowane do `doc/`, komendy w
+`results/README.md`. Block M (`plot_memory_control.py`) nie idzie do pracy.
+Tekst pracy ma liczby z J1, J3, J4 i R oraz przepływ po erach z obu bramek.
 
 ## Pliki
 
@@ -142,7 +151,7 @@ Run 3, wznawianie).
 | `slurm_benchmark.sbatch` | krok R: cały węzeł, `run_all.sh` | nie |
 | `run_all.sh` | środowisko, walidacja, kampania (R) | nie |
 | `run_benchmark.sh` | kampania: `strong11`, `node11`, `raw.jsonl`, `RESUME` | tak (kawałki, pomijanie po timeoucie) |
-| `check_chain11.py` | bramki: typy 10 kolumn i przepływ 11 filtrów w każdym pliku | tak (`chain_cuts` w 1. linii) |
+| `check_chain11.py` | bramki: typy 10 kolumn i przepływ 11 filtrów w każdym pliku | tak (`chain_cuts` w 1. linii, `multiprocessing.Pool` zamiast `ProcessPoolExecutor`) |
 | `bench_spec.py` | łańcuchy, kolumny, okresy i cięcia, `chain_cuts()` | tak (x/y) |
 | `bench_common.py` | argumenty, fazy czasu, RSS, rekord `BENCH`, liczby zdarzeń | tak (`chain_cuts`, `file_entries`) |
 | `bench_chain.py` | jeden pomiar łańcucha (J1, R, RDF w J3) | nie |
@@ -153,9 +162,9 @@ Run 3, wznawianie).
 | `validate.py` | zgodność implementacji przed każdym krokiem Run 3 | nie |
 | `bench_filter.py`, `bench_efficiency.py` | wołane przez `validate.py` | nie |
 | `dataset_json.py` | `dataset.json` w katalogu wyników | nie |
-| `plot_results.py` | `bench.csv`, wykresy, tabele | nie |
-| `plot_real_vs_synthetic.py` | analiza: rysunek pełnych plików, tabela zbiorów | nie |
-| `plot_memory_control.py` | analiza: Block M | nie |
+| `plot_results.py` | `bench.csv`, wykresy, tabele (`table_whole_node.tex` dla bloku N; pamięć w `08_implementations.png`) | tak |
+| `plot_real_vs_synthetic.py` | analiza: rysunek skalowania (Run 2, Run 3, slim), tabela zbiorów | tak (slim na rysunku) |
+| `plot_memory_control.py` | analiza: Block M, nieużywane w pracy | nie |
 | `environment.yml` | env `pps-bench` | nie |
 | `README.md`, `FINAL.md` | opis | tak |
 | `app/analyze_proton_events.py`, `app/apply_corrections.py`, `app/diamond_geometry.py`, `app/efficiency.json` | kod analizy, z którego biorą implementacje i `validate.py` | nie |

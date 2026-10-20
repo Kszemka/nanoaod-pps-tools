@@ -16,7 +16,7 @@
 # for the CERN password as well. Neither is stored anywhere.
 #
 #   tmux new -s run3
-#   CERN_USER=<login> bash test/fetch_eos.sh     # Ctrl-b d to detach, tmux attach -t run3
+#   CERN_USER=<login> bash test/archive/fetch_eos.sh     # Ctrl-b d to detach, tmux attach -t run3
 #
 # Running it again resumes: rsync skips complete files.
 # CMS data is not public: it stays on scratch, outside the repository.
@@ -132,7 +132,7 @@ if [[ -s pending.txt ]]; then
 fi
 rm -f pending.txt
 echo "  all $(wc -l <"$SIZES") files have the size from $SIZES; next:"
-echo "  sbatch test/slurm_fetch_eos.sbatch"
+echo "  sbatch test/archive/slurm_fetch_eos.sbatch"
 if [[ -n "$ticket" && "$DELETE_TICKET" == 1 ]]; then
     kdestroy
     echo "  Kerberos ticket destroyed"

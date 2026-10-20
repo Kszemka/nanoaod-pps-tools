@@ -617,10 +617,7 @@ def plot_core(ok, results_dir, plt, save, outputs, records_all=()):
     impl_tests = [t for t in CORE_TEST_LABEL if any(r.get("test") == t for r in one_core)]
     if impl_tests:
         def impl_name(key):
-            impl, _ = key
-            if impl in ("rdf", "rdf-lazy", "jit"):
-                return "RDataFrame"
-            return impl
+            return SIZE_IMPL_LABEL.get(key[0], key[0])
 
         per_test = {}
         for test in impl_tests:
@@ -628,26 +625,38 @@ def plot_core(ok, results_dir, plt, save, outputs, records_all=()):
             values = aggregate(sub, ("impl", "mode"), "events_per_s")
             per_test[test] = (sub, values, sorted(values, key=lambda k: values[k][0]))
         heights = [max(len(per_test[t][2]), 1) for t in impl_tests]
-        fig, axes = plt.subplots(len(impl_tests), 2, figsize=(13, 1.4 + 0.5 * sum(heights)),
-                                 gridspec_kw={"height_ratios": heights}, squeeze=False)
+        fig, axes = plt.subplots(len(impl_tests), 3, figsize=(17, 1.4 + 0.5 * sum(heights)),
+                                 gridspec_kw={"height_ratios": heights,
+                                              "width_ratios": (1, 1.3, 0.8)}, squeeze=False)
         # The warmup pass is where cling compiles the kernel, so together with graph building it
         # is RDataFrame's compilation cost -- the one-off price uproot and NumPy do not pay.
         for r in one_core:
             r["wall_compile"] = (r.get("wall_warmup") or 0.0) + (r.get("wall_jit") or 0.0)
+            rss_kb = r.get("time_maxrss_kb") or r.get("peak_rss_kb")
+            r["rss_gb"] = rss_kb * 1024 / 1e9 if rss_kb else None
         phase_names = ("wall_setup", "wall_compile", "wall_loop")
         phase_labels = ("setup", "JIT compilation", "event loop")
         phase_colours = ("#4575b4", "#1a9850", "#d73027")
         for row, test in enumerate(impl_tests):
             sub, values, keys = per_test[test]
-            ax_tp, ax_ph = axes[row]
+            ax_tp, ax_ph, ax_rss = axes[row]
             names = [impl_name(k) for k in keys]
             rates = [values[k][0] for k in keys]
-            ax_tp.barh(names, rates, color=CORE_TEST_COLOUR[test])
-            ax_tp.set_xscale("log")
-            ax_tp.set_xlim(right=max(rates) * 1.5)
-            ax_tp.xaxis.set_minor_formatter(plt.NullFormatter())
+            ax_tp.barh(names, [rate / 1e6 for rate in rates], color=CORE_TEST_COLOUR[test])
+            ax_tp.set_xlim(0, max(rates) / 1e6 * 1.25)
+            for index, rate in enumerate(rates):
+                ax_tp.text(rate / 1e6, index, f"  {rate / 1e6:.2f}", va="center", fontsize=7)
             ax_tp.set_ylabel(CORE_TEST_LABEL[test])
             ax_tp.grid(alpha=0.3, axis="x")
+
+            rss = aggregate(sub, ("impl", "mode"), "rss_gb")
+            peaks = [rss.get(k, (0.0,))[0] or 0.0 for k in keys]
+            ax_rss.barh(names, peaks, color=[SIZE_IMPL_COLOUR.get(n, "#888888") for n in names])
+            ax_rss.set_xlim(0, max(peaks) * 1.3)
+            for index, peak in enumerate(peaks):
+                ax_rss.text(peak, index, f"  {peak:.1f}", va="center", fontsize=7)
+            ax_rss.set_yticklabels([])
+            ax_rss.grid(alpha=0.3, axis="x")
 
             phases = {name: aggregate(sub, ("impl", "mode"), name) for name in phase_names}
             lefts = [0.0] * len(keys)
@@ -659,7 +668,7 @@ def plot_core(ok, results_dir, plt, save, outputs, records_all=()):
             # Linear, because on a log axis stacked segments are not proportional to time: the
             # ~1 s setup took as much width as a 20 s loop. The scale follows the compiled
             # implementations; the interpreted ones run off it and are labelled with their total.
-            compiled = [t for n, t in zip(names, lefts) if not n.startswith("python")]
+            compiled = [t for n, t in zip(names, lefts) if not n.startswith("Python")]
             right = max(compiled or lefts) * 1.6
             ax_ph.set_xlim(0, right)
             for index, total in enumerate(lefts):
@@ -674,10 +683,12 @@ def plot_core(ok, results_dir, plt, save, outputs, records_all=()):
                       else impls[0].get("input", "one input"))
         axes[0][0].set_title(f"Event-loop throughput on {impl_input}, one core")
         axes[0][1].set_title("Wall time per query")
+        axes[0][2].set_title("Peak memory")
         axes[-1][1].legend(*axes[0][1].get_legend_handles_labels(), fontsize=8,
                            loc="upper center", bbox_to_anchor=(0.5, -0.45), ncol=3)
-        axes[-1][0].set_xlabel("events / s")
+        axes[-1][0].set_xlabel("million events / s")
         axes[-1][1].set_xlabel("wall time [s]")
+        axes[-1][2].set_xlabel("peak RSS [GB]")
         save(fig, "08_implementations.png")
 
     # (9) Two baselines for the same speedup. ImplicitMT(1) is the right reference for how well
@@ -813,7 +824,7 @@ def plot_whole_node(records, plt, save):
         if field == "cpu_h":
             return r["cpu_loop"] / 3600 if r.get("cpu_loop") is not None else None
         rss = r.get("peak_rss_tree_kb") or r.get("time_maxrss_kb") or r.get("peak_rss_kb")
-        return rss * 1024 / 1e9 if rss else None
+        return rss / 1024 ** 2 if rss else None
 
     panels = (("wall_total", "total time [min]"), ("cpu_h", "CPU in the event loop [core-h]"),
               ("rss", "peak RSS, all processes [GB]"))
@@ -862,6 +873,66 @@ def plot_whole_node(records, plt, save):
     fig.suptitle(f"Whole node, whole input: {', '.join(map(str, threads))} "
                  f"threads or processes{suffix}")
     save(fig, "17_whole_node.png")
+
+
+def whole_node_table(records):
+    """
+    LaTeX tabular of the whole-node runs, one column per implementation: medians of the ok runs
+    at the highest thread count, with the factor against RDataFrame where it has runs. None
+    without whole-node records.
+    """
+    runs = defaultdict(list)
+    for r in records:
+        match = re.match(r"r\d+_node_\w+?_(rdf-lazy|uproot-pool|python-pool)_t(\d+)$",
+                         str(r.get("label", "")))
+        if match and r.get("status") == "ok":
+            runs[(match.group(1), int(match.group(2)))].append(r)
+    if not runs:
+        return None
+    top = max(n for _, n in runs)
+    impls = [i for i in NODE_IMPL_LABEL if (i, top) in runs]
+
+    def med(impl, get):
+        values = [v for v in (get(r) for r in runs[(impl, top)]) if v is not None]
+        return median(values) if values else None
+
+    def gb(field):
+        return lambda r: r[field] / 1e9 if r.get(field) is not None else None
+
+    rows = [
+        ("Runs", lambda r: 1, "{:.0f}", False),
+        ("Event loop [s]", lambda r: r.get("wall_loop"), "{:.1f}", True),
+        ("Whole process [s]", total_seconds, "{:.1f}", True),
+        ("CPU in the loop [core-h]",
+         lambda r: r["cpu_loop"] / 3600 if r.get("cpu_loop") is not None else None, "{:.2f}", True),
+        ("Cores busy in the loop", lambda r: r.get("cores_busy_loop"), "{:.0f}", False),
+        ("Requested by the reader [GB]", gb("bytes_loop"), "{:.1f}", False),
+        ("Passed to \\texttt{read()} [GB]", gb("io_rchar_loop"), "{:.0f}", False),
+        ("Read from storage [GB]", gb("io_read_bytes_loop"), "{:.0f}", False),
+        ("Peak RSS, all processes [GB]",
+         lambda r: (r.get("peak_rss_tree_kb") or r.get("time_maxrss_kb") or r.get("peak_rss_kb")
+                    or 0) / 1024 ** 2 or None, "{:.1f}", True),
+        ("Events per second [$10^6$]",
+         lambda r: r["events_per_s"] / 1e6 if r.get("events_per_s") else None, "{:.1f}", False),
+    ]
+    lines = ["\\begin{tabular}{l" + "r" * len(impls) + "}", "\\toprule",
+             " & " + " & ".join(NODE_IMPL_LABEL[i].split("\n")[0] for i in impls) + " \\\\",
+             "\\midrule"]
+    for name, get, fmt, relative in rows:
+        cells = []
+        base = med("rdf-lazy", get) if "rdf-lazy" in impls else None
+        for impl in impls:
+            if name == "Runs":
+                cells.append(str(len(runs[(impl, top)])))
+                continue
+            value = med(impl, get)
+            cell = "-" if value is None else fmt.format(value)
+            if relative and base and value is not None and impl != "rdf-lazy":
+                cell += f" ({value / base:.1f}$\\times$)"
+            cells.append(cell)
+        lines.append(f"{name} & " + " & ".join(cells) + " \\\\")
+    lines += ["\\bottomrule", "\\end{tabular}", ""]
+    return "\n".join(lines)
 
 
 SIZE_IMPL_LABEL = {"rdf": "RDataFrame", "rdf-lazy": "RDataFrame", "jit": "RDataFrame",
@@ -1340,6 +1411,12 @@ def main():
               f"{', '.join(sorted(r['label'] for r in failed)[:10])}")
 
     for path in write_scalability_tables(records, args.results):
+        print(f"  {path}")
+    table = whole_node_table(records)
+    if table is not None:
+        path = os.path.join(args.results, "table_whole_node.tex")
+        with open(path, "w") as f:
+            f.write(table)
         print(f"  {path}")
     if not args.csv_only:
         for path in plot(records, args.results):

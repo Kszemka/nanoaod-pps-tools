@@ -19,7 +19,7 @@ Ręcznie uruchamia się tylko pliki z kolumny „uruchamiasz”, resztę wołaj�
 |---|---|---|
 | ostateczna kampania (Helios, `plgrid-now`) | `sbatch test/slurm_final.sbatch`: `gate`, `gate3`, `J1`, `J3`, `R`, `J4` po kolei | `check_chain11.py` (bramki); `slurm_run3.sbatch` (J1, J3, J4); `slurm_benchmark.sbatch` (R) |
 | pliki sztuczne (Ares, Helios) | `sbatch slurm_benchmark.sbatch` | `run_all.sh` → `validate.py`, `run_benchmark.sh` → `plot_results.py` |
-| wykresy i tabele (lokalnie) | `plot_results.py`; porównanie zbiorów: `plot_real_vs_synthetic.py`; Block M: `plot_memory_control.py` | — |
+| wykresy i tabele (lokalnie) | `plot_results.py`; porównanie zbiorów: `plot_real_vs_synthetic.py`; Block M (nieużywane w pracy): `plot_memory_control.py` | — |
 
 `run_benchmark.sh` woła pojedyncze pomiary `bench_filter.py`, `bench_chain.py`,
 `bench_efficiency.py` i `bench_pool.py`, a dla T6 `archive/make_slim.py`. Wszystkie importują
@@ -34,7 +34,7 @@ Ręcznie uruchamia się tylko pliki z kolumny „uruchamiasz”, resztę wołaj�
 | `slurm_run3.sbatch` | kroki Run 3: J1 strong, J3 RDF i uproot na całym węźle, J4 Python na całym węźle (`JOB=`); J2 weak poza kampanią |
 | `check_chain11.py` | przed kampanią na prawdziwych plikach: typy 10 kolumn łańcucha w każdym pliku i liczba zdarzeń po każdym z 11 filtrów, dla okresu `--period`; pierwsza linia to `chain_cuts` |
 | `plot_real_vs_synthetic.py` | porównanie zbiorów `--set DIR:TEST:LABEL`: rysunek pełnych plików (czas, przyspieszenie, RSS) i tabela zbiorów (`sets_summary.{csv,tex}`) |
-| `plot_memory_control.py` | Block M: pamięć na sztucznych pełnych kopiach wobec slim (`memory_control.{png,csv}`) |
+| `plot_memory_control.py` | Block M: pamięć na sztucznych pełnych kopiach wobec slim (`memory_control.{png,csv}`); nieużywane w pracy |
 | `slurm_benchmark.sbatch` | kampania ogólna: zadanie na całym węźle (`--exclusive`), Ares albo Helios; `DATASET_JSON_INPUT` pisze `dataset.json` |
 | `run_all.sh` | sprawdza środowisko i Git LFS, uruchamia walidację, potem kampanię |
 | `validate.py` | zgodność wszystkich implementacji, geometria C++ vs Python, 1 vs N wątków |
@@ -180,7 +180,7 @@ i `timeUnc`, ale piksele i paski czasu nie mierzą (wszędzie 0), więc te dwie 
 czytane, a cięcie na nich niczego nie wybierało; x i y mają wartości w każdym śladzie i
 przepuszczają większość zdarzeń. Każdy rekord ma pole `chain_cuts` (np.
 `...,track_x>4,track_y>0,...`), a `check_chain11.py` wypisuje je w pierwszej linii, więc wyniki
-z innymi cięciami da się rozpoznać. Zbiór slim (`results/synthetic-slim`) i Block M zmierzono
+z innymi cięciami da się rozpoznać. Zbiór slim (`results/synthetic-slim`) i dawny Block M zmierzono
 jeszcze z `time`/`timeUnc`: te same 10 gałęzi co do liczby i typów, inne dwie z nich.
 
 ## Pełne pliki, łańcuch 11 (Helios)
@@ -197,8 +197,8 @@ R idzie tylko po bramce `check_chain11.py` (krok `gate`) z kodem 0, z `RUN_TIMEO
 „R na czysto”: katalog wyników z rekordami innych cięć (`chain_cuts`) krok odsuwa jako
 `...-oldcuts-<data>` i mierzy od nowa, więc w katalogu są tylko biegi z obecnymi cięciami.
 Sztuczne pełne pliki (dawny krok F, 96 kopii `ds_x32`, `DATASET=big`) zostały zmierzone
-wcześniej i nie są powtarzane: `results/full-chain11/artificial-1tb`, w pracy jako kontrola
-pamięci (Block M).
+wcześniej i nie są powtarzane: `results/full-chain11/artificial-1tb`, dawna kontrola pamięci
+(Block M), usunięta z pracy.
 
 ### Cięcia 2016
 

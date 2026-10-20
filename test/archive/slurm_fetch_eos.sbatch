@@ -13,7 +13,8 @@
 # The benchmark's lists over the Run 3 files that fetch_eos.sh copied from CERN EOS into $OUT_DIR
 # (default $SCRATCH/bench/data3). Nothing here connects to CERN.
 #
-#   1. check       every file in SIZES is here with its size -> local.txt
+#   1. check       every file in SIZES is here with its size -> run3_sizes_complete.txt,
+#                  local.txt; with ALLOW_MISSING=1 the incomplete ones are left out
 #   2. inventory   inventory_files.py: entries, schema, codec, pps_fraction -> local.csv
 #   3. chain11     check_chain11.py on every file: column types, per-filter counts per
 #                  era/version -> chain11_check.txt, per file -> chain11_files.csv
@@ -28,7 +29,9 @@
 #
 # Each step is skipped when its output exists. With more files in SIZES (a larger selection on
 # lxplus), run fetch_eos.sh again and delete local.csv, chain11_check.txt, chain11_files.csv,
-# sets.json and READY before submitting.
+# sets.json and READY before submitting. To use what a stopped download brought so far:
+#
+#   sbatch --cpus-per-task=48 --export=ALL,ALLOW_MISSING=1,SCAN_JOBS=48 test/archive/slurm_fetch_eos.sbatch
 #
 # CMS data is not public: it stays on scratch, outside the repository.
 
@@ -57,6 +60,9 @@ SIZES="${SIZES:-run3_sizes.txt}"
 SCAN_JOBS="${SCAN_JOBS:-16}"
 MIN_PPS="${MIN_PPS:-0}"
 MIN_PASSED="${MIN_PASSED:-0}"
+# 1: build the lists from the files of SIZES that are complete, leaving out the rest (a download
+# stopped part-way); rsync --partial leaves an interrupted file under its final name.
+ALLOW_MISSING="${ALLOW_MISSING:-0}"
 # The cuts the benchmark measures, for the per-era flow in READY (and MIN_PASSED, if set).
 CHAIN_PERIOD="${CHAIN_PERIOD:-run3}"
 # weak_N holds N/96 of the set, so weak_96 at 96 threads is all of it.
@@ -75,17 +81,26 @@ fi
 echo "=== 1. check [$(stamp)]"
 [[ -s "$SIZES" ]] || fail "no $SIZES in $OUT_DIR; run fetch_eos.sh on the login node first."
 missing=0
+: >run3_sizes_complete.txt
 while read -r path size; do
     rel="${path#/eos/cms/store/}"
     if [[ "$(stat -c %s "$rel" 2>/dev/null)" != "$size" ]]; then
         ((missing += 1))
         ((missing <= 5)) && echo "  missing or incomplete: $rel"
+    else
+        echo "$path $size" >>run3_sizes_complete.txt
     fi
 done <"$SIZES"
-((missing == 0)) || fail "$missing files missing or incomplete; run fetch_eos.sh again."
-awk -v d="$OUT_DIR" '{ sub("^/eos/cms/store/", "", $1); print d "/" $1 }' "$SIZES" >local.txt
-total_gb="$(awk '{ s += $2 } END { printf "%.1f", s / 1e9 }' "$SIZES")"
-echo "  all $(wc -l <local.txt) files have the size from $SIZES: $total_gb GB"
+if [[ "$ALLOW_MISSING" == 1 ]]; then
+    [[ -s run3_sizes_complete.txt ]] || fail "no file of $SIZES is complete."
+    echo "  ALLOW_MISSING=1: $missing files missing or incomplete left out"
+else
+    ((missing == 0)) || fail "$missing files missing or incomplete; run fetch_eos.sh again."
+fi
+awk -v d="$OUT_DIR" '{ sub("^/eos/cms/store/", "", $1); print d "/" $1 }' run3_sizes_complete.txt \
+    >local.txt
+total_gb="$(awk '{ s += $2 } END { printf "%.1f", s / 1e9 }' run3_sizes_complete.txt)"
+echo "  $(wc -l <local.txt) files have the size from $SIZES: $total_gb GB"
 
 echo "=== 2. inventory [$(stamp)]"
 if [[ ! -s local.csv ]]; then
@@ -128,7 +143,9 @@ events = sum(int(r["entries"]) for r in rows)
 schemas = sorted({r["schema"] for r in rows})
 groups = sorted({f"{r['era']}/{r['primary_dataset']}" for r in rows})
 pps = sum(float(r["pps_fraction"] or 0) * int(r["entries"]) for r in rows) / max(events, 1)
+chain_gb = sum(int(r.get("chain_zip_bytes") or 0) for r in rows) / 1e9
 print(f"files {len(rows)}  GB {gb:.1f}  events {events}  {' '.join(groups)}")
+print(f"chain11 branches: {chain_gb:.1f} GB compressed ({100 * chain_gb / max(gb, 1e-9):.2f}% of the set)")
 print(f"schemas {len(schemas)}: {' '.join(schemas)}")
 print(f"events with PPS {pps:.3f}  codec {' '.join(sorted({r['compression'] for r in rows}))}")
 print(f"core.txt: {core['files']} files, {core['events']} events, {core['gb']} GB")

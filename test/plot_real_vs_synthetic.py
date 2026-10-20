@@ -1,24 +1,23 @@
 #!/usr/bin/env python3
 """
-Strong scaling of one chain on several ~1 TB sets, on the same machine: one figure for the sets
-of full-width files, one table for all of them.
+Strong scaling of one chain on several ~1 TB sets, on the same machine: one figure and one
+table for all of them.
 
     plot_real_vs_synthetic.py --out results/comparison \
         --set "results/full-chain11/run2-1tb:chain11:Run 2 Open Data" \
         --set "results/run3/chain11:chain11:Run 3" \
         --set "results/synthetic-slim:chain11:artificial, slim files" \
-        --figure "Run 2 Open Data" --figure "Run 3" --best-of "Run 2 Open Data"
+        --best-of "Run 2 Open Data"
 
 The artificial full files (96 copies of one ds_x32) are left out: their 5 million baskets per
-file make the memory per thread a property of the copies rather than of production files, and
-they serve instead as the memory control against the slim set (plot_memory_control.py).
+file make the memory per thread a property of the copies rather than of production files.
 
 --set DIR:TEST:LABEL is a results directory, the test field of its strong sweep (chain11 for
 the 11-filter chain, chain for the 5-filter one) and the name the set goes by; a directory
 without raw.jsonl or without that sweep is skipped with a warning, so sets still being measured
 can stay on the command line. --figure LABEL puts a set in the figure (every set without any
---figure). The figure's sets are full-width files of which the chain reads a few percent; the
-slim set, which the chain reads whole, belongs in the table as the reference.
+--figure). Full-width files, of which the chain reads a few percent, and the slim set, which it
+reads whole, side by side show what the width of a file costs each thread.
 
 --best-of LABEL takes a set's loop time at each thread count as the fastest of its repeats
 instead of their median, for a set whose repeats were slowed down from outside by different
@@ -280,7 +279,7 @@ def plot(sets, tests, path, best=()):
     ax_m.set_title("memory")
     chain = {"chain11": "11-filter chain (10 branches)", "chain": "5-filter chain (4 branches)"}
     fig.suptitle(" / ".join(chain.get(t, t) for t in sorted(set(tests)))
-                 + ", ~1 TB of full-width files each")
+                 + ", 1.0-1.8 TB per set")
     fig.tight_layout()
     fig.savefig(path, dpi=140)
     plt.close(fig)
