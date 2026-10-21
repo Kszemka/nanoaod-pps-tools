@@ -297,13 +297,14 @@ if [[ "$DATASET" == big && -z "${DRY_RUN:-}" ]]; then
     echo "lists: $DATA_DIR/lists (core $BIG_COPIES, impl $IMPL_COPIES, weak ${WEAK_UNIT}N, size N copies)"
 fi
 
-# The .root files behind an input: the file itself, the files a wildcard pattern matches, or a
-# list's entries with relative paths resolved against the list's directory (the rule
+# The .root files behind an input: the file itself, the files space-separated wildcard patterns
+# match, or a list's entries with relative paths resolved against the list's directory (the rule
 # bench_common.input_files applies).
 list_files() {
     local path="$1" base line
     if [[ "$path" == *[*?[]* ]]; then
-        "$PY" -c 'import glob, sys; print("\n".join(sorted(glob.glob(sys.argv[1]))))' "$path"
+        "$PY" -c 'import glob, sys
+print("\n".join(sorted({f for p in sys.argv[1].split() for f in glob.glob(p)})))' "$path"
         return
     fi
     if [[ "$path" != *.txt ]]; then

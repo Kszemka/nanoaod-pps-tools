@@ -134,15 +134,15 @@ def is_glob(path):
 
 def input_files(path):
     """
-    The .root files behind --input: the file itself, the files a wildcard pattern matches
-    (sorted), or the entries of a .txt list.
+    The .root files behind --input: the file itself, the files one or more space-separated
+    wildcard patterns match (sorted), or the entries of a .txt list.
 
     Relative entries resolve against the list's own directory, so a list written next to the
     data stays valid wherever the data directory is mounted. Blank lines and # comments are
     skipped.
     """
     if is_glob(path):
-        return sorted(glob.glob(path))
+        return sorted({f for pattern in path.split() for f in glob.glob(pattern)})
     if not is_file_list(path):
         return [path]
     base = os.path.dirname(os.path.abspath(path))

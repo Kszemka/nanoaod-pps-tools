@@ -34,15 +34,19 @@
 # Every job appends with RESUME=1: a resubmitted job runs only what is not yet recorded as ok.
 # FRESH=1 moves an existing results directory aside first.
 #
-# INPUT_GLOB (J1, J3, J4): a wildcard pattern instead of the lists of slurm_fetch_eos.sbatch.
-# RDataFrame gets the pattern as it is and opens every match; the job first checks that ROOT
-# expands it to the same files as Python's glob, that no match is an incomplete download (sizes
-# in $DATA_DIR/run3_sizes.txt, if there), and describes the matches itself (inventory.csv in
+# INPUT_GLOB (J1, J3, J4): space-separated wildcard patterns instead of the lists of
+# slurm_fetch_eos.sbatch. RDataFrame gets the patterns as they are and opens every match; the
+# job first checks that ROOT expands each to the same files as Python's glob, that every .root
+# under $DATA_DIR/data matches a pattern, that no match is an incomplete download (sizes in
+# $DATA_DIR/run3_sizes.txt, if there), and describes the matches itself (inventory.csv in
 # RESULTS: entries for the records, and the compressed size of the chain's ten branches).
+# The re-reconstructed 2024 files sit two levels below the version (<ver>/2530000/<uuid>.root),
+# the PromptReco ones five (<ver>/000/369/844/00000/<uuid>.root), hence two patterns.
 #
 #   sbatch --export=ALL,JOB=J1 test/slurm_run3.sbatch
-#   INPUT_GLOB="$SCRATCH/bench/data3/data/*/*/NANOAOD/*/*/*.root" \
-#       RESULTS=$SCRATCH/bench/results-helios-run3-4tb-chain11 \
+#   D=$SCRATCH/bench/data3/data
+#   INPUT_GLOB="$D/*/*/NANOAOD/*/*/*.root $D/*/*/NANOAOD/*/*/*/*/*/*.root" \
+#       RESULTS=$SCRATCH/bench/results-helios-run3-4tb-full-chain11 \
 #       sbatch --partition=plgrid-now --time=12:00:00 --export=ALL,JOB=J1 test/slurm_run3.sbatch
 #
 # CMS data is not public: it stays on scratch; results hold timings and counts only.
@@ -116,12 +120,26 @@ import glob, os, sys
 
 import ROOT
 
-pattern, sizes_path, data_dir = sys.argv[1:]
-files = sorted(glob.glob(pattern))
-added = ROOT.TChain("Events").Add(pattern)
-print(f"  {len(files)} files match (Python glob), ROOT adds {added}")
-if not files or added != len(files):
-    sys.exit("ERROR: ROOT does not expand the pattern to the files Python's glob finds.")
+patterns, sizes_path, data_dir = sys.argv[1].split(), sys.argv[2], sys.argv[3]
+files = set()
+for pattern in patterns:
+    matches = glob.glob(pattern)
+    added = ROOT.TChain("Events").Add(pattern)
+    print(f"  {pattern}: {len(matches)} files (Python glob), ROOT adds {added}")
+    if not matches or added != len(matches):
+        sys.exit("ERROR: ROOT does not expand the pattern to the files Python's glob finds.")
+    files.update(os.path.normpath(p) for p in matches)
+matched, files = files, sorted(files)
+# rsync writes into hidden .<name>.XXXXXX files, which are not part of the set.
+on_disk = sorted(os.path.normpath(os.path.join(root, name))
+                 for root, _, names in os.walk(os.path.join(data_dir, "data"))
+                 for name in names if name.endswith(".root") and not name.startswith("."))
+missed = [p for p in on_disk if p not in matched]
+for p in missed[:5]:
+    print(f"  not matched: {p}")
+if missed:
+    sys.exit(f"ERROR: {len(missed)} of {len(on_disk)} .root files under data/ match no pattern.")
+print(f"  {len(files)} files: every .root under data/ matches a pattern")
 if os.path.exists(sizes_path):
     prefix = "/eos/cms/store/"
     expected = {}
@@ -129,8 +147,7 @@ if os.path.exists(sizes_path):
         for line in f:
             path, size = line.split()
             expected[os.path.normpath(os.path.join(data_dir, path[len(prefix):]))] = int(size)
-    bad = [p for p in files
-           if os.path.normpath(p) in expected and os.path.getsize(p) != expected[os.path.normpath(p)]]
+    bad = [p for p in files if p in expected and os.path.getsize(p) != expected[p]]
     for p in bad[:5]:
         print(f"  incomplete: {p}")
     if bad:

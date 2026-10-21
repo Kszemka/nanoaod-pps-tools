@@ -444,11 +444,14 @@ sbatch test/archive/slurm_fetch_eos.sbatch   # po „done”
 - **Więcej danych:** większą listę robi `scan_eos_list.py` na lxplus (opis w nagłówku pliku:
   `sample`, `scan`, `rank`, `scan --no-chain`, `write`), potem `fetch_eos.sh` jeszcze raz, usunąć `local.csv`,
   `chain11_check.txt`, `chain11_files.csv`, `sets.json` i `READY`, wysłać zadanie.
-- **Wszystkie pobrane pliki naraz (`INPUT_GLOB`):** bez list. J1 podaje wzorzec `*.root`
-  prosto do `RDataFrame`, które otwiera wszystkie pasujące pliki. Gdy pobieranie zatrzymano
-  w połowie (`Ctrl-c` w `tmux`, potem `ps -u $USER | grep -c '[r]sync'` ma dać 0), pliki urwane
-  przez rsync (`--partial` zostawia je pod docelową nazwą) trzeba wynieść poza wzorzec, do
-  `data3/partial/`:
+- **Wszystkie pobrane pliki naraz (`INPUT_GLOB`):** bez list. J1 podaje wzorce `*.root`
+  (oddzielone spacją) prosto do `RDataFrame`, które otwiera wszystkie pasujące pliki. Wzorce
+  są dwa, bo pliki z 2024 (`MINIv6NANOv15-v1/2530000/<uuid>.root`) leżą dwa poziomy pod
+  wersją, a PromptReco z 2025–2026 (`PromptReco-v1/000/369/844/00000/<uuid>.root`) pięć; sam
+  pierwszy wzorzec dał 2779 plików z 2024, 2,77 TB (`results-helios-run3-4tb-chain11`). Gdy
+  pobieranie zatrzymano w połowie (`Ctrl-c` w `tmux`, potem `ps -u $USER | grep -c '[r]sync'`
+  ma dać 0), pliki urwane przez rsync (`--partial` zostawia je pod docelową nazwą) trzeba wynieść
+  poza wzorce, do `data3/partial/` (skrypt bierze ścieżki z listy, więc każdą głębokość):
 
   ```bash
   cd $SCRATCH/bench/data3
@@ -467,17 +470,21 @@ sbatch test/archive/slurm_fetch_eos.sbatch   # po „done”
   Strong scaling na `plgrid-now`, do nowego katalogu (stary pominąłby zmierzone punkty,
   `RESUME=1`). 1–64 wątki raz, 80–192 trzy razy (r2 i r3 po całym przebiegu): tam przebieg
   trwa ~2,5 min i rozrzut między powtórzeniami (3–14% na 1,8 TB) jest rzędu szukanych różnic.
-  Razem ~8 h; `STRONG11_R2_THREADS= STRONG11_R3_THREADS=` wyłącza powtórzenia (~7 h).
+  Na ~4,1 TiB razem ~7,5 h (1,64 × przebieg na 2,5 TiB; 1 wątek ~3,9 h);
+  `STRONG11_R2_THREADS= STRONG11_R3_THREADS=` wyłącza powtórzenia.
 
   ```bash
   cd $SCRATCH/bench/nanoaod-pps-tools
-  INPUT_GLOB="$SCRATCH/bench/data3/data/*/*/NANOAOD/*/*/*.root" \
-  RESULTS=$SCRATCH/bench/results-helios-run3-4tb-chain11 \
+  D=$SCRATCH/bench/data3/data
+  INPUT_GLOB="$D/*/*/NANOAOD/*/*/*.root $D/*/*/NANOAOD/*/*/*/*/*/*.root" \
+  RESULTS=$SCRATCH/bench/results-helios-run3-4tb-full-chain11 \
   sbatch --partition=plgrid-now --time=12:00:00 --export=ALL,JOB=J1 test/slurm_run3.sbatch
   ```
 
-  Przed pomiarami zadanie sprawdza, że ROOT rozwija wzorzec do tych samych plików co `glob`
-  Pythona i że żaden nie jest urwany (rozmiary z `run3_sizes.txt`), potem pisze
+  Przed pomiarami zadanie sprawdza, że ROOT rozwija każdy wzorzec do tych samych plików co
+  `glob` Pythona, że każdy plik `.root` pod `data3/data` pasuje do któregoś wzorca (inaczej
+  wypisuje pominięte i kończy się błędem) i że żaden nie jest urwany (rozmiary z
+  `run3_sizes.txt`), potem pisze
   `inventory.csv` do `RESULTS` (zdarzenia każdego pliku do rekordów, bez otwierania plików po
   każdym przebiegu). Kończy się błędem, gdy któryś plik się nie otwiera albo nie ma kolumn
   łańcucha. W logu `chain11 branches: ... GB compressed` to skompresowany rozmiar dziesięciu

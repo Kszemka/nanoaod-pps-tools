@@ -167,9 +167,12 @@ def file_entries(files, tree="Events"):
 
 
 def make_dataframe(args, tree="Events"):
-    # A pattern goes to RDataFrame as it is: ROOT expands it and opens every match.
+    # Patterns go to RDataFrame as they are: ROOT expands each and opens every match.
     if is_glob(args.input):
-        return ROOT.RDataFrame(tree, args.input)
+        patterns = args.input.split()
+        if len(patterns) == 1:
+            return ROOT.RDataFrame(tree, patterns[0])
+        return ROOT.RDataFrame(tree, ROOT.std.vector["std::string"](patterns))
     files = input_files(args.input)
     if len(files) == 1:
         return ROOT.RDataFrame(tree, files[0])
