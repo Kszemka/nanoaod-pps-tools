@@ -491,6 +491,27 @@ sbatch test/archive/slurm_fetch_eos.sbatch   # po „done”
   gałęzi łańcucha (`chain_zip_bytes`), czyli tyle, ile łańcuch przeczyta. Sondy na `impl.txt`
   nie ma; `RUN_TIMEOUT` to 6 h na przebieg.
 
+  Weak scaling na tych samych plikach (J2): `weak_N` to N/192 zbioru, N na siatce strong
+  (1–192), więc `weak_192` to cały zbiór, ten sam co J1 przy 192 wątkach (kontrola: ~103 s).
+  Po tych samych sprawdzeniach i `inventory.csv` zadanie buduje listy w `data3/lists-full/`
+  (`make_filelists.py --any-schema --interleave --interleave-order name --nested`, tylko
+  z `inventory.csv`): każda lista zawiera mniejsze, ma skład całości po erze i PD i ~16,4 M
+  zdarzeń (~3025 klastrów) na wątek. Pliki w grupie idą po nazwie (UUID), nie po ścieżce: ścieżki
+  PromptReco sortują się po runie, a pierwsze runy ery mają pliki po kilka zdarzeń, więc
+  `weak_1` miałby 159 plików zamiast 46 (od 8 wątków jest 31–33 na wątek, jak przy 192). Lista
+  trafia do `RDataFrame` jako jeden wektor plików, tak jak wzorce J1: jeden `TChain`, pliki
+  otwierane po kolei w wątkach. Domyślnie trzy pełne przebiegi (`REPEATS_WEAK=3`), ~50 biegów
+  po 1–3 min. `inventory.csv` z katalogu J1 skopiowany do nowego `RESULTS` pomija jego budowę.
+
+  ```bash
+  mkdir -p $SCRATCH/bench/results-helios-run3-4tb-full-weak
+  cp $SCRATCH/bench/results-helios-run3-4tb-full-chain11/inventory.csv \
+      $SCRATCH/bench/results-helios-run3-4tb-full-weak/
+  INPUT_GLOB="$D/*/*/NANOAOD/*/*/*.root $D/*/*/NANOAOD/*/*/*/*/*/*.root" \
+  RESULTS=$SCRATCH/bench/results-helios-run3-4tb-full-weak \
+  sbatch --partition=plgrid-now --time=06:00:00 --export=ALL,JOB=J2 test/slurm_run3.sbatch
+  ```
+
 ## Uruchomienie na Heliosie (192 rdzenie)
 
 Na Ares 1 TB skaluje się aż do 48 rdzeni bez maksimum, a ds_x32 ma maksimum przy 8–16 wątkach.

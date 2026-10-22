@@ -22,7 +22,8 @@
 #       on impl.txt (~11 M events) that sets RUN_TIMEOUT
 #                                              -> results-helios-run3-chain11
 #   J2  weak11, weak_N (N/96 of the set) on N threads, N up to 96; REPEATS_WEAK (default 1)
-#       series r1..rN
+#       series r1..rN; with INPUT_GLOB, weak_N is N/192 of the matches, N up to 192 (the
+#       last point is the whole set, as J1 at 192 threads), three series by default
 #                                              -> results-helios-run3-chain11-weak
 #   J3  node11: RDataFrame (control) and uproot-pool on the whole set, NODE_THREADS,
 #       REPEATS_NODE (default 3) runs each      -> results-helios-run3-node
@@ -34,7 +35,7 @@
 # Every job appends with RESUME=1: a resubmitted job runs only what is not yet recorded as ok.
 # FRESH=1 moves an existing results directory aside first.
 #
-# INPUT_GLOB (J1, J3, J4): space-separated wildcard patterns instead of the lists of
+# INPUT_GLOB: space-separated wildcard patterns instead of the lists of
 # slurm_fetch_eos.sbatch. RDataFrame gets the patterns as they are and opens every match; the
 # job first checks that ROOT expands each to the same files as Python's glob, that every .root
 # under $DATA_DIR/data matches a pattern, that no match is an incomplete download (sizes in
@@ -42,12 +43,17 @@
 # RESULTS: entries for the records, and the compressed size of the chain's ten branches).
 # The re-reconstructed 2024 files sit two levels below the version (<ver>/2530000/<uuid>.root),
 # the PromptReco ones five (<ver>/000/369/844/00000/<uuid>.root), hence two patterns.
+# J2 cuts the matches into nested lists in $DATA_DIR/lists-full (archive/make_filelists.py,
+# from inventory.csv alone): every weak_N holds the smaller ones and the same era/PD mix, and
+# goes to RDataFrame as one vector of files, which opens them as it opens J1's matches.
 #
 #   sbatch --export=ALL,JOB=J1 test/slurm_run3.sbatch
 #   D=$SCRATCH/bench/data3/data
 #   INPUT_GLOB="$D/*/*/NANOAOD/*/*/*.root $D/*/*/NANOAOD/*/*/*/*/*/*.root" \
 #       RESULTS=$SCRATCH/bench/results-helios-run3-4tb-full-chain11 \
 #       sbatch --partition=plgrid-now --time=12:00:00 --export=ALL,JOB=J1 test/slurm_run3.sbatch
+#   INPUT_GLOB="..." RESULTS=$SCRATCH/bench/results-helios-run3-4tb-full-weak \
+#       sbatch --partition=plgrid-now --time=06:00:00 --export=ALL,JOB=J2 test/slurm_run3.sbatch
 #
 # CMS data is not public: it stays on scratch; results hold timings and counts only.
 
@@ -60,7 +66,6 @@ export MAMBA_ROOT_PREFIX="${SCRATCH_BENCH}/micromamba"
 # The Run 3 files and their lists (test/archive/slurm_fetch_eos.sbatch).
 DATA_DIR="${DATA_DIR:-${SCRATCH_BENCH}/data3}"
 STRONG_THREADS="${STRONG_THREADS:-1 4 8 12 16 24 32 48 64 80 96 112 128 144 160 176 192}"
-WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32 48 64 96}"
 NODE_THREADS="${NODE_THREADS:-192}"
 REPEAT_THREADS="80 96 112 128 144 160 176 192"
 export STRONG11_R2_THREADS="${STRONG11_R2_THREADS-$REPEAT_THREADS}"
@@ -77,11 +82,13 @@ case "$JOB" in
 esac
 RESULTS="${RESULTS:-${SCRATCH_BENCH}/results-helios-run3-${name}}"
 INPUT_GLOB="${INPUT_GLOB:-}"
-
-if [[ -n "$INPUT_GLOB" && "$JOB" == J2 ]]; then
-    echo "ERROR: J2 needs the weak_N lists; INPUT_GLOB is for J1, J3 and J4." >&2
-    exit 1
+if [[ -n "$INPUT_GLOB" ]]; then
+    WEAK_SERIES="${WEAK_SERIES:-$STRONG_THREADS}"
+    export REPEATS_WEAK="${REPEATS_WEAK:-3}"
+else
+    WEAK_SERIES="${WEAK_SERIES:-1 2 4 8 16 32 48 64 96}"
 fi
+
 if [[ -z "$INPUT_GLOB" && ! -f "$DATA_DIR/READY" ]]; then
     echo "ERROR: $DATA_DIR/READY missing: the lists and READY are built by test/archive/slurm_fetch_eos.sbatch." >&2
     exit 1
@@ -181,6 +188,43 @@ PYEOF
             --inventory "$RESULTS/inventory.csv"
     fi
     export DS_CORE="$INPUT_GLOB" DS_IMPL="$INPUT_GLOB"
+    if [[ "$JOB" == J2 ]]; then
+        # Rebuilt every time: it reads only inventory.csv and takes a second.
+        WEAK_DIR="$DATA_DIR/lists-full"
+        echo "=== weak_N lists -> $WEAK_DIR [$(date +%H:%M:%S)] ==="
+        rm -rf "$WEAK_DIR"
+        "$PY" test/archive/make_filelists.py --inventory "$RESULTS/inventory.csv" \
+            --any-schema --min-pps 0 --core-events 1e12 --core-gb 1e6 \
+            --interleave --interleave-order name --nested --weak-series "$WEAK_SERIES" \
+            --out-dir "$WEAK_DIR" || exit 1
+        "$PY" - "$RESULTS/inventory.csv" "$WEAK_DIR" "$WEAK_SERIES" <<'PYEOF' || exit 1
+import csv, os, sys
+
+inventory, weak_dir, series = sys.argv[1], sys.argv[2], [int(n) for n in sys.argv[3].split()]
+
+def entries(name):
+    with open(os.path.join(weak_dir, name)) as f:
+        return [os.path.normpath(os.path.join(weak_dir, line.strip())) for line in f if line.strip()]
+
+with open(inventory) as f:
+    matched = {os.path.normpath(r["path"]) for r in csv.DictReader(f)}
+core = entries("core.txt")
+if set(core) != matched or len(core) != len(matched):
+    sys.exit(f"ERROR: core.txt has {len(core)} files, the patterns match {len(matched)}.")
+last = entries(f"weak_{max(series)}.txt")
+if last != core:
+    sys.exit(f"ERROR: weak_{max(series)}.txt is not the whole set ({len(last)} of {len(core)} files).")
+previous = []
+for n in sorted(series):
+    files = entries(f"weak_{n}.txt")
+    if files[:len(previous)] != previous:
+        sys.exit(f"ERROR: weak_{n}.txt does not start with the smaller point's files.")
+    previous = files
+print(f"  weak_{max(series)} is the whole set; every weak_N holds the smaller ones")
+PYEOF
+        cp "$WEAK_DIR/sets.json" "$RESULTS/sets.json"
+        export WEAK_PATTERN="lists-full/weak_%s.txt"
+    fi
 else
     cp "$DATA_DIR/READY" "$DATA_DIR/sets.json" "$RESULTS/"
     if [[ ! -f "$RESULTS/dataset.json" ]]; then

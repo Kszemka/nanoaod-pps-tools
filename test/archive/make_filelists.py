@@ -134,7 +134,7 @@ def closest_subset(files, target, tolerance=0.02):
     return sorted(chosen, key=lambda r: r["path"])
 
 
-def interleave(files):
+def interleave(files, order="path"):
     """
     Files of every (era, primary dataset) spread evenly through the list, by events.
 
@@ -142,9 +142,14 @@ def interleave(files):
     group, and the list is sorted on that. Every prefix then holds each group in its overall
     proportion, so a weak-scaling point at 4 threads reads the same mix of 2023 and 2024,
     Muon0 and Muon1, as the one at 96.
+
+    order="name" walks each group in file-name order instead of path order. PromptReco paths
+    sort by run, and the first runs of an era hold files of a few events, so in path order the
+    smallest prefixes are mostly such files: as many events per thread, five times the files.
+    The names are UUIDs, unrelated to the run.
     """
     groups = defaultdict(list)
-    for row in sorted(files, key=lambda r: r["path"]):
+    for row in sorted(files, key=lambda r: r[order]):
         groups[(row.get("era"), row.get("primary_dataset"))].append(row)
     keyed = []
     for key, rows in groups.items():
@@ -216,6 +221,8 @@ def main():
     parser.add_argument("--weak-series", default="1 2 4 8 16 32 48")
     parser.add_argument("--interleave", action="store_true",
                         help="order core.txt so that every prefix has the same era/PD mix")
+    parser.add_argument("--interleave-order", choices=("path", "name"), default="path",
+                        help="with --interleave: walk each era/PD group in this order")
     parser.add_argument("--nested", action="store_true",
                         help="weak_N.txt and impl.txt as prefixes of core.txt, each containing "
                              "the smaller ones, instead of greedy subsets")
@@ -227,7 +234,7 @@ def main():
         print("ERROR: no eligible files (check --run, --version, --min-pps)", file=sys.stderr)
         return 1
     if args.interleave:
-        files = interleave(files)
+        files = interleave(files, args.interleave_order)
     summary = describe(files)
     print(f"eligible: {summary['files']} files, {summary['events']} events, "
           f"{summary['gb']} GB, schema {schema}")
@@ -267,7 +274,7 @@ def main():
     unit = events / max(series)
     subset_of = closest_prefix if args.nested else closest_subset
     sets = {"schema": schema, "core": describe(core), "weak": {}, "impl": None,
-            "order": "interleaved" if args.interleave else "path",
+            "order": f"interleaved by {args.interleave_order}" if args.interleave else "path",
             "subsets": "prefixes" if args.nested else "closest"}
     write_list(os.path.join(out_dir, "core.txt"), core, out_dir)
 

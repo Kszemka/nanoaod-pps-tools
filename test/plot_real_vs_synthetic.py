@@ -5,7 +5,7 @@ table for all of them.
 
     plot_real_vs_synthetic.py --out results/comparison \
         --set "results/full-chain11/run2-1tb:chain11:Run 2 Open Data" \
-        --set "results/run3/chain11:chain11:Run 3" \
+        --set "results/run3/chain11-full:chain11:Run 3" \
         --set "results/synthetic-slim:chain11:artificial, slim files" \
         --best-of "Run 2 Open Data"
 
@@ -232,7 +232,7 @@ def write_tex(rows, path):
         f.write("\n".join(lines) + "\n")
 
 
-def plot(sets, tests, path, best=()):
+def plot(sets, tests, path, best=(), sizes_tb=()):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -278,8 +278,10 @@ def plot(sets, tests, path, best=()):
     ax_s.set_title("strong scaling")
     ax_m.set_title("memory")
     chain = {"chain11": "11-filter chain (10 branches)", "chain": "5-filter chain (4 branches)"}
-    fig.suptitle(" / ".join(chain.get(t, t) for t in sorted(set(tests)))
-                 + ", 1.0-1.8 TB per set")
+    title = " / ".join(chain.get(t, t) for t in sorted(set(tests)))
+    if sizes_tb:
+        title += f", {min(sizes_tb):.1f}-{max(sizes_tb):.1f} TB per set"
+    fig.suptitle(title)
     fig.tight_layout()
     fig.savefig(path, dpi=140)
     plt.close(fig)
@@ -336,7 +338,8 @@ def main():
         print("matplotlib not installed -- tables written, figure skipped", file=sys.stderr)
         return 0
     png_path = os.path.join(args.out, "full_files_chain11.png")
-    plot(drawn, [tests[label] for label in drawn], png_path, set(args.best_of))
+    sizes_tb = [row["input_tb"] for row in rows if row["set"] in drawn and row["input_tb"]]
+    plot(drawn, [tests[label] for label in drawn], png_path, set(args.best_of), sizes_tb)
     print(f"  {png_path}")
     return 0
 

@@ -13,9 +13,12 @@ czyta kilka procent; slim to 1,5 TB czytane w całości.
 | `synthetic-slim/` | Helios | 96 plików slim (10 gałęzi), 29,8 mld zdarzeń, 1,54 TB | 11 filtrów | T1 1–192 (96–192: 2–4 biegi), T2 1–96 | krzywa slim na rysunku skalowania (`bench_full_files`), `bench_scalability_slim.tex`, `bench_weak_slim`; kolumna slim w tabeli zbiorów | jest |
 | `full-chain11/artificial-1tb/` | Helios | 96 kopii `ds_x32`, pełne pliki (1984 gałęzie), 1,07 mld zdarzeń, 1,04 TB | 11 filtrów | T1 1–192, 96–192 trzy razy | nieużywane w pracy: dawny test pamięci (blok M, `plot_memory_control.py`), usunięty z pracy; 5 mln koszyków na plik (10–30× więcej niż dane rzeczywiste) zawyża koszt wątku | jest |
 | `full-chain11/run2-1tb/` | Helios | Run 2 Open Data (Run2016H, G), 653 pliki, 1,05 mld zdarzeń, 1,04 TB, LZMA:9 | 11 filtrów, `--period 2016` z cięciami x/y (przepuszcza 1,43%, 14,9 mln) | krok R kampanii `slurm_final.sbatch`: T1 1–192, 80–192 trzy razy | rysunek pełnych plików, tabela zbiorów; czas pętli to najszybszy z trzech biegów (`--best-of`): od 112 wątków powtórki rozpadają się na 12,5–15,3 s (89–101 zajętych rdzeni) i 16–26 s (57–78), także bez żadnego kopiowania, bo pętla jest krótka, a Lustre współdzielony | jest |
-| `run3/chain11/` | Helios | Run 3 `core.txt`: 2488 plików z er Run2024C–Run2026D (każdy czytelny plik z kolumnami łańcucha), 1,31 mld zdarzeń, 1,80 TB, LZMA:9 | 11 filtrów, cięcia Run 3 (`PERIODS["run3"]`, `test/README.md`, „Cięcia Run 3”), przepuszcza 37,1% | J1: T1 1–192, 80–192 trzy razy | rysunek pełnych plików, tabela zbiorów | jest |
-| `run3/node/` | Helios | Run 3 `core.txt`, cały zbiór | 11 filtrów, cięcia Run 3 | J3: RDF na 192 wątkach i `uproot-pool` na 192 procesach; J4: `python-pool` na 192 procesach; pule dostają kawałki po 250 000 zdarzeń (6644 zadania); po 3 biegi | `17_whole_node.png`, `table_whole_node.tex` (sekcja Comparison of Implementations: Whole Node) | jest |
+| `run3/chain11-full/` | Helios (`x1000c7s0b0n0`) | cały pobrany Run 3 (`INPUT_GLOB`, dwa wzorce): 5939 plików z er Run2024C–Run2026D, 3,15 mld zdarzeń, 4,47 TB, LZMA:9; `inventory.csv` | 11 filtrów, cięcia Run 3, przepuszcza 46,3% | J1: T1 1–192, 80–192 trzy razy | rysunek pełnych plików, tabela zbiorów | jest |
+| `run3/chain11-2024/` | Helios (`x1000c4s3b0n3`) | sam 2024 (pierwszy wzorzec `INPUT_GLOB` bez PromptReco): 2779 plików Run2024C–I, 1,97 mld zdarzeń, 2,77 TB | 11 filtrów, cięcia Run 3 | J1: T1 1–192, 80–192 trzy razy | kontrola powtarzalności: przeskalowany o pracę zgadza się z `chain11-full` co do 3% w każdym punkcie | jest |
+| `run3/chain11/` | Helios (`x1000c7s3b0n0`) | podzbiór Run 3 `core.txt`: 2488 plików z er Run2024C–Run2026D (każdy czytelny plik z kolumnami łańcucha), 1,31 mld zdarzeń, 1,80 TB, LZMA:9 | 11 filtrów, cięcia Run 3 (`PERIODS["run3"]`, `test/README.md`, „Cięcia Run 3”), przepuszcza 37,1% | J1: T1 1–192, 80–192 trzy razy | zastąpiony przez `chain11-full`; w pracy tylko jako przykład zmienności: do 32 wątków zgodny z pozostałymi co do 1%, od 96 wątków 10–30% wolniejszy | jest |
+| `run3/node/` | Helios | podzbiór Run 3 `core.txt` (1,80 TB, jak `run3/chain11/`) | 11 filtrów, cięcia Run 3 | J3: RDF na 192 wątkach i `uproot-pool` na 192 procesach; J4: `python-pool` na 192 procesach; pule dostają kawałki po 250 000 zdarzeń (6644 zadania); po 3 biegi | `17_whole_node.png`, `table_whole_node.tex` (sekcja Comparison of Implementations: Whole Node) | jest |
 | `comparison/` | — | z katalogów powyżej | — | — | `full_files_chain11.png` i `sets_summary.{csv,tex}` (Run 2, Run 3, slim); `memory_control.{png,csv}` nieużywane w pracy | jest |
+| `comparison/run3-sets/` | — | `run3/chain11`, `run3/chain11-2024`, `run3/chain11-full` | — | — | `full_files_chain11.png` jako `bench_run3_repro` (powtarzalność trzech przebiegów Run 3 na trzech węzłach); `sets_summary.*` tylko do liczb w tekście | jest |
 | `archive/` | — | kampanie, które nie idą do pracy | — | — | — | — |
 
 `archive/`:
@@ -51,9 +54,15 @@ Rysunki i tabele porównania:
 ```bash
 python test/plot_real_vs_synthetic.py --out results/comparison \
     --set "results/full-chain11/run2-1tb:chain11:Run 2 Open Data" \
-    --set "results/run3/chain11:chain11:Run 3" \
+    --set "results/run3/chain11-full:chain11:Run 3" \
     --set "results/synthetic-slim:chain11:artificial, slim files" \
     --best-of "Run 2 Open Data"
+
+python test/plot_real_vs_synthetic.py --out results/comparison/run3-sets \
+    --set "results/run3/chain11:chain11:Run 3, 1.8 TB subset" \
+    --set "results/run3/chain11-2024:chain11:Run 3, 2024 part (2.77 TB)" \
+    --set "results/run3/chain11-full:chain11:Run 3, whole set (4.47 TB)"
+cp results/comparison/run3-sets/full_files_chain11.png doc/Images/bench_run3_repro.png
 
 python test/plot_memory_control.py --out results/comparison \
     --set "results/full-chain11/artificial-1tb:chain11:artificial, full files" \

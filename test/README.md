@@ -132,7 +132,7 @@ czytane z Lustre na zimno. Pliki leżą pod `$SCRATCH/bench/data3/data`, listy (
 | zadanie | co | katalog wyników |
 |---|---|---|
 | J1 | `strong11` na `core.txt`, 1–192 wątki, 80–192 jeszcze dwa razy (r2, r3); najpierw próba 1 wątku na `impl.txt`, z niej `RUN_TIMEOUT` (3 × szacunek t1) | `results-helios-run3-chain11` |
-| J2 | `weak11`: `weak_N` na N wątkach, N = 1, 2, 4, 8, 16, 32, 48, 64, 96 (poza kampanią) | `results-helios-run3-chain11-weak` |
+| J2 | `weak11`: `weak_N` na N wątkach, N = 1, 2, 4, 8, 16, 32, 48, 64, 96 (poza kampanią); z `INPUT_GLOB` `weak_N` = N/192 całego zbioru, N = 1–192 jak w J1, trzy przebiegi (`archive/README.md`) | `results-helios-run3-chain11-weak` |
 | J3 | `node11`: RDF na 192 wątkach (kontrola) i `uproot-pool` na 192 procesach, cały zbiór, po `REPEATS_NODE` (3) biegów | `results-helios-run3-node` |
 | J4 | `node11`: `python-pool` na 192 procesach, cały zbiór, 3 biegi, `RUN_TIMEOUT=5400` | `results-helios-run3-node` |
 
